@@ -85,17 +85,29 @@ pub use balance::{
     BalanceVariant,
     TokenMetadata,
 };
-pub use call::CallCommand;
+pub use call::{
+    CallCommand,
+    CallCommandBuilder,
+};
 use contract_metadata::ContractMetadata;
 pub use contract_transcode::ContractMessageTranscoder;
 pub use error::{
     ErrorVariant,
     GenericError,
 };
-pub use instantiate::InstantiateCommand;
-pub use remove::RemoveCommand;
+pub use instantiate::{
+    InstantiateCommand,
+    InstantiateCommandBuilder,
+};
+pub use remove::{
+    RemoveCommand,
+    RemoveCommandBuilder,
+};
 pub use subxt::PolkadotConfig as DefaultConfig;
-pub use upload::UploadCommand;
+pub use upload::{
+    UploadCommand,
+    UploadCommandBuilder,
+};
 
 type PairSigner = tx::PairSigner<DefaultConfig, sr25519::Pair>;
 pub type Client = OnlineClient<DefaultConfig>;
@@ -141,6 +153,121 @@ pub struct ExtrinsicOpts {
     /// Before submitting a transaction, do not ask the user for confirmation.
     #[clap(short('y'), long)]
     skip_confirm: bool,
+}
+
+/// A builder for ExtrinsicOpts.
+pub struct ExtrinsicOptsBuilder {
+    file: Option<PathBuf>,
+    manifest_path: Option<PathBuf>,
+    url: url::Url,
+    suri: String,
+    password: Option<String>,
+    verbosity: VerbosityFlags,
+    execute: bool,
+    storage_deposit_limit: Option<BalanceVariant>,
+    skip_dry_run: bool,
+    skip_confirm: bool,
+}
+
+impl ExtrinsicOptsBuilder {
+    /// Creates a new ExtrinsicOptsBuilder with default values.
+    pub fn new() -> Self {
+        ExtrinsicOptsBuilder {
+            file: None,
+            manifest_path: None,
+            url: url::Url::parse("ws://localhost:9944").unwrap(),
+            suri: String::new(),
+            password: None,
+            verbosity: VerbosityFlags::default(),
+            execute: false,
+            storage_deposit_limit: None,
+            skip_dry_run: false,
+            skip_confirm: false,
+        }
+    }
+
+    /// Sets the path to the contract build artifact file.
+    pub fn file(mut self, file: PathBuf) -> Self {
+        self.file = Some(file);
+        self
+    }
+
+    /// Sets the path to the Cargo.toml of the contract.
+    pub fn manifest_path(mut self, manifest_path: PathBuf) -> Self {
+        self.manifest_path = Some(manifest_path);
+        self
+    }
+
+    /// Sets the websockets URL of a substrate node.
+    pub fn url(mut self, url: url::Url) -> Self {
+        self.url = url;
+        self
+    }
+
+    /// Sets the secret key URI for the account deploying the contract.
+    pub fn suri(mut self, suri: String) -> Self {
+        self.suri = suri;
+        self
+    }
+
+    /// Sets the password for the secret key.
+    pub fn password(mut self, password: Option<String>) -> Self {
+        self.password = password;
+        self
+    }
+
+    /// Sets the verbosity level.
+    pub fn verbosity(mut self, verbosity: VerbosityFlags) -> Self {
+        self.verbosity = verbosity;
+        self
+    }
+
+    /// Sets whether to submit the extrinsic for on-chain execution.
+    pub fn execute(mut self, execute: bool) -> Self {
+        self.execute = execute;
+        self
+    }
+
+    /// Sets the maximum amount of balance that can be charged from the caller to pay for
+    /// storage.
+    pub fn storage_deposit_limit(mut self, limit: Option<BalanceVariant>) -> Self {
+        self.storage_deposit_limit = limit;
+        self
+    }
+
+    /// Sets whether to skip dry-run via RPC before submitting a transaction.
+    pub fn skip_dry_run(mut self, skip: bool) -> Self {
+        self.skip_dry_run = skip;
+        self
+    }
+
+    /// Sets whether to skip confirmation before submitting a transaction.
+    pub fn skip_confirm(mut self, skip: bool) -> Self {
+        self.skip_confirm = skip;
+        self
+    }
+
+    /// Builds and returns an ExtrinsicOpts instance with the configured values.
+    pub fn done(self) -> ExtrinsicOpts {
+        ExtrinsicOpts {
+            file: self.file,
+            manifest_path: self.manifest_path,
+            url: self.url,
+            suri: self.suri,
+            password: self.password,
+            verbosity: self.verbosity,
+            execute: self.execute,
+            storage_deposit_limit: self.storage_deposit_limit,
+            skip_dry_run: self.skip_dry_run,
+            skip_confirm: self.skip_confirm,
+        }
+    }
+}
+
+impl Default for ExtrinsicOptsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExtrinsicOpts {

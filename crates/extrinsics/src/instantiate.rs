@@ -31,6 +31,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    ExtrinsicOptsBuilder,
     PairSigner,
     StorageDeposit,
     TokenMetadata,
@@ -90,6 +91,102 @@ pub struct InstantiateCommand {
     /// Export the instantiate output in JSON format.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
+}
+
+/// A builder for InstantiateCommand.
+pub struct InstantiateCommandBuilder {
+    constructor: String,
+    args: Vec<String>,
+    extrinsic_opts: ExtrinsicOptsBuilder,
+    value: BalanceVariant,
+    gas_limit: Option<u64>,
+    proof_size: Option<u64>,
+    salt: Option<Bytes>,
+    output_json: bool,
+}
+
+impl InstantiateCommandBuilder {
+    /// Creates a new InstantiateCommandBuilder with default values.
+    pub fn new() -> Self {
+        InstantiateCommandBuilder {
+            constructor: String::from("new"),
+            args: Vec::new(),
+            extrinsic_opts: ExtrinsicOptsBuilder::default(),
+            value: "0".parse().unwrap(),
+            gas_limit: None,
+            proof_size: None,
+            salt: None,
+            output_json: false,
+        }
+    }
+
+    /// Sets the name of the contract constructor to call.
+    pub fn constructor(mut self, constructor: String) -> Self {
+        self.constructor = constructor;
+        self
+    }
+
+    /// Sets the constructor arguments, encoded as strings.
+    pub fn args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    /// Sets the extrinsic options.
+    pub fn extrinsic_opts(mut self, extrinsic_opts: ExtrinsicOptsBuilder) -> Self {
+        self.extrinsic_opts = extrinsic_opts;
+        self
+    }
+
+    /// Sets the initial balance to transfer to the instantiated contract.
+    pub fn value(mut self, value: BalanceVariant) -> Self {
+        self.value = value;
+        self
+    }
+
+    /// Sets the maximum amount of gas to be used for this command.
+    pub fn gas_limit(mut self, gas_limit: Option<u64>) -> Self {
+        self.gas_limit = gas_limit;
+        self
+    }
+
+    /// Sets the maximum proof size for this instantiation.
+    pub fn proof_size(mut self, proof_size: Option<u64>) -> Self {
+        self.proof_size = proof_size;
+        self
+    }
+
+    /// Sets the salt used in the address derivation of the new contract.
+    pub fn salt(mut self, salt: Option<Bytes>) -> Self {
+        self.salt = salt;
+        self
+    }
+
+    /// Sets whether to export the instantiate output in JSON format.
+    pub fn output_json(mut self, output_json: bool) -> Self {
+        self.output_json = output_json;
+        self
+    }
+
+    /// Builds and returns an `InstantiateCommand` instance with the configured values.
+    pub fn build(self) -> InstantiateCommand {
+        InstantiateCommand {
+            constructor: self.constructor,
+            args: self.args,
+            extrinsic_opts: self.extrinsic_opts.done(),
+            value: self.value,
+            gas_limit: self.gas_limit,
+            proof_size: self.proof_size,
+            salt: self.salt,
+            output_json: self.output_json,
+        }
+    }
+}
+
+impl Default for InstantiateCommandBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Parse hex encoded bytes.

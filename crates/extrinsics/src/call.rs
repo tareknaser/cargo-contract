@@ -23,6 +23,7 @@ use super::{
     runtime_api::api,
     state_call,
     submit_extrinsic,
+    AccountId32,
     Balance,
     BalanceVariant,
     Client,
@@ -30,6 +31,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    ExtrinsicOptsBuilder,
     PairSigner,
     StorageDeposit,
     TokenMetadata,
@@ -87,6 +89,102 @@ pub struct CallCommand {
     /// Export the call output in JSON format.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
+}
+
+/// A builder for CallCommand.
+pub struct CallCommandBuilder {
+    contract: <DefaultConfig as Config>::AccountId,
+    message: String,
+    args: Vec<String>,
+    extrinsic_opts: ExtrinsicOptsBuilder,
+    gas_limit: Option<u64>,
+    proof_size: Option<u64>,
+    value: BalanceVariant,
+    output_json: bool,
+}
+
+impl CallCommandBuilder {
+    /// Creates a new CallCommandBuilder with default values.
+    pub fn new() -> Self {
+        CallCommandBuilder {
+            contract: AccountId32([0; 32]),
+            message: String::new(),
+            args: Vec::new(),
+            extrinsic_opts: ExtrinsicOptsBuilder::default(),
+            gas_limit: None,
+            proof_size: None,
+            value: "0".parse().unwrap(),
+            output_json: false,
+        }
+    }
+
+    /// Sets the address of the contract to call.
+    pub fn contract(mut self, contract: <DefaultConfig as Config>::AccountId) -> Self {
+        self.contract = contract;
+        self
+    }
+
+    /// Sets the name of the contract message to call.
+    pub fn message(mut self, message: String) -> Self {
+        self.message = message;
+        self
+    }
+
+    /// Sets the arguments of the contract message to call.
+    pub fn args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    /// Sets the extrinsic options.
+    pub fn extrinsic_opts(mut self, extrinsic_opts: ExtrinsicOptsBuilder) -> Self {
+        self.extrinsic_opts = extrinsic_opts;
+        self
+    }
+
+    /// Sets the maximum amount of gas to be used for this command.
+    pub fn gas_limit(mut self, gas_limit: Option<u64>) -> Self {
+        self.gas_limit = gas_limit;
+        self
+    }
+
+    /// Sets the maximum proof size for this call.
+    pub fn proof_size(mut self, proof_size: Option<u64>) -> Self {
+        self.proof_size = proof_size;
+        self
+    }
+
+    /// Sets the value to be transferred as part of the call.
+    pub fn value(mut self, value: BalanceVariant) -> Self {
+        self.value = value;
+        self
+    }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(mut self, output_json: bool) -> Self {
+        self.output_json = output_json;
+        self
+    }
+
+    /// Builds and returns a CallCommand instance with the configured values.
+    pub fn build(self) -> CallCommand {
+        CallCommand {
+            contract: self.contract,
+            message: self.message,
+            args: self.args,
+            extrinsic_opts: self.extrinsic_opts.done(),
+            gas_limit: self.gas_limit,
+            proof_size: self.proof_size,
+            value: self.value,
+            output_json: self.output_json,
+        }
+    }
+}
+
+impl Default for CallCommandBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CallCommand {

@@ -29,6 +29,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    ExtrinsicOptsBuilder,
     PairSigner,
     TokenMetadata,
 };
@@ -51,6 +52,60 @@ pub struct RemoveCommand {
     /// Export the call output as JSON.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
+}
+
+/// A builder for RemoveCommand.
+pub struct RemoveCommandBuilder {
+    code_hash: Option<<DefaultConfig as Config>::Hash>,
+    extrinsic_opts: ExtrinsicOptsBuilder,
+    output_json: bool,
+}
+
+impl RemoveCommandBuilder {
+    /// Creates a new RemoveCommandBuilder with default values.
+    pub fn new() -> Self {
+        RemoveCommandBuilder {
+            code_hash: None,
+            extrinsic_opts: ExtrinsicOptsBuilder::default(),
+            output_json: false,
+        }
+    }
+
+    /// Sets the hash of the smart contract code already uploaded to the chain.
+    pub fn code_hash(
+        mut self,
+        code_hash: Option<<DefaultConfig as Config>::Hash>,
+    ) -> Self {
+        self.code_hash = code_hash;
+        self
+    }
+
+    /// Sets the extrinsic options.
+    pub fn extrinsic_opts(mut self, extrinsic_opts: ExtrinsicOptsBuilder) -> Self {
+        self.extrinsic_opts = extrinsic_opts;
+        self
+    }
+
+    /// Sets whether to export the call output as JSON.
+    pub fn output_json(mut self, output_json: bool) -> Self {
+        self.output_json = output_json;
+        self
+    }
+
+    /// Builds and returns a RemoveCommand instance with the configured values.
+    pub fn build(self) -> RemoveCommand {
+        RemoveCommand {
+            code_hash: self.code_hash,
+            extrinsic_opts: self.extrinsic_opts.done(),
+            output_json: self.output_json,
+        }
+    }
+}
+
+impl Default for RemoveCommandBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RemoveCommand {

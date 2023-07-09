@@ -30,6 +30,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    ExtrinsicOptsBuilder,
     PairSigner,
     TokenMetadata,
     WasmCode,
@@ -52,6 +53,48 @@ pub struct UploadCommand {
     /// Export the call output in JSON format.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
+}
+
+/// A builder for UploadCommand.
+pub struct UploadCommandBuilder {
+    extrinsic_opts: ExtrinsicOptsBuilder,
+    output_json: bool,
+}
+
+impl UploadCommandBuilder {
+    /// Creates a new UploadCommandBuilder with default values.
+    pub fn new() -> Self {
+        UploadCommandBuilder {
+            extrinsic_opts: ExtrinsicOptsBuilder::default(),
+            output_json: false,
+        }
+    }
+
+    /// Sets the extrinsic options.
+    pub fn extrinsic_opts(mut self, extrinsic_opts: ExtrinsicOptsBuilder) -> Self {
+        self.extrinsic_opts = extrinsic_opts;
+        self
+    }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(mut self, output_json: bool) -> Self {
+        self.output_json = output_json;
+        self
+    }
+
+    /// Builds and returns an UploadCommand instance with the configured values.
+    pub fn done(self) -> UploadCommand {
+        UploadCommand {
+            extrinsic_opts: self.extrinsic_opts.done(),
+            output_json: self.output_json,
+        }
+    }
+}
+
+impl Default for UploadCommandBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UploadCommand {
