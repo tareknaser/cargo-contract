@@ -30,12 +30,13 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
-    ExtrinsicOptsBuilder,
     PairSigner,
     TokenMetadata,
+    VerbosityFlags,
     WasmCode,
 };
 use anyhow::Result;
+use core::marker::PhantomData;
 use pallet_contracts_primitives::CodeUploadResult;
 use scale::Encode;
 use std::fmt::Debug;
@@ -55,49 +56,89 @@ pub struct UploadCommand {
     output_json: bool,
 }
 
-/// A builder for UploadCommand.
-pub struct UploadCommandBuilder {
-    extrinsic_opts: ExtrinsicOptsBuilder,
-    output_json: bool,
+/// Type state for `UploadCommandBuilder` to tell that some mandatory state has not yet
+/// been set yet or to fail upon setting the same state multiple times.
+pub struct Missing<S>(PhantomData<fn() -> S>);
+
+mod state {
+    //! Type states that tell what state of the Upload Command has not
+    //! yet been set properly for a valid construction.
+
+    /// Type state for extrinsic options.
+    pub struct ExtrinsicOptions;
+    /// Type state for whether to export the call output in JSON format.
+    pub struct OutputJson;
 }
 
-impl UploadCommandBuilder {
-    /// Creates a new UploadCommandBuilder with default values.
-    pub fn new() -> Self {
+/// A builder for the upload command.
+#[allow(clippy::type_complexity)]
+pub struct UploadCommandBuilder<ExtrinsicOptions, OutputJson> {
+    opts: UploadCommand,
+    marker: PhantomData<fn() -> (ExtrinsicOptions, OutputJson)>,
+}
+
+impl<O> UploadCommandBuilder<Missing<state::ExtrinsicOptions>, O> {
+    /// Sets the extrinsic operation.
+    pub fn extrinsic_opts(
+        self,
+        extrinsic_opts: ExtrinsicOpts,
+    ) -> UploadCommandBuilder<state::ExtrinsicOptions, O> {
         UploadCommandBuilder {
-            extrinsic_opts: ExtrinsicOptsBuilder::default(),
-            output_json: false,
+            opts: UploadCommand {
+                extrinsic_opts,
+                ..self.opts
+            },
+            marker: PhantomData,
         }
     }
+}
 
-    /// Sets the extrinsic options.
-    pub fn extrinsic_opts(mut self, extrinsic_opts: ExtrinsicOptsBuilder) -> Self {
-        self.extrinsic_opts = extrinsic_opts;
-        self
-    }
-
+impl<E> UploadCommandBuilder<E, Missing<state::OutputJson>> {
     /// Sets whether to export the call output in JSON format.
-    pub fn output_json(mut self, output_json: bool) -> Self {
-        self.output_json = output_json;
-        self
-    }
-
-    /// Builds and returns an UploadCommand instance with the configured values.
-    pub fn done(self) -> UploadCommand {
-        UploadCommand {
-            extrinsic_opts: self.extrinsic_opts.done(),
-            output_json: self.output_json,
+    pub fn output_json(
+        self,
+        output_json: bool,
+    ) -> UploadCommandBuilder<E, state::OutputJson> {
+        UploadCommandBuilder {
+            opts: UploadCommand {
+                output_json,
+                ..self.opts
+            },
+            marker: PhantomData,
         }
     }
 }
 
-impl Default for UploadCommandBuilder {
-    fn default() -> Self {
-        Self::new()
+impl UploadCommandBuilder<state::ExtrinsicOptions, state::OutputJson> {
+    /// Finishes construction of the upload command.
+    pub fn done(self) -> UploadCommand {
+        self.opts
     }
 }
 
+#[allow(clippy::new_ret_no_self)]
 impl UploadCommand {
+    /// Creates a new `UploadCommand` instance.
+    pub fn new(
+    ) -> UploadCommandBuilder<Missing<state::ExtrinsicOptions>, Missing<state::OutputJson>>
+    {
+        // we need to create a dummy extrinsic opts to pass it to `UploadCommandBuilder`
+        let dummy_extrinsic_opts = ExtrinsicOpts::new()
+            .suri("".to_string())
+            .verbosity(VerbosityFlags::default())
+            .execute(false)
+            .skip_dry_run(false)
+            .skip_confirm(false)
+            .done();
+        UploadCommandBuilder {
+            opts: Self {
+                extrinsic_opts: dummy_extrinsic_opts,
+                output_json: false,
+            },
+            marker: PhantomData,
+        }
+    }
+
     pub fn is_json(&self) -> bool {
         self.output_json
     }
