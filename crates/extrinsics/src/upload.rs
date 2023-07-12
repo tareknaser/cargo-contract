@@ -32,7 +32,6 @@ use super::{
     ExtrinsicOpts,
     PairSigner,
     TokenMetadata,
-    VerbosityFlags,
     WasmCode,
 };
 use anyhow::Result;
@@ -66,23 +65,20 @@ mod state {
 
     /// Type state for extrinsic options.
     pub struct ExtrinsicOptions;
-    /// Type state for whether to export the call output in JSON format.
-    pub struct OutputJson;
 }
 
 /// A builder for the upload command.
-#[allow(clippy::type_complexity)]
-pub struct UploadCommandBuilder<ExtrinsicOptions, OutputJson> {
+pub struct UploadCommandBuilder<ExtrinsicOptions> {
     opts: UploadCommand,
-    marker: PhantomData<fn() -> (ExtrinsicOptions, OutputJson)>,
+    marker: PhantomData<fn() -> ExtrinsicOptions>,
 }
 
-impl<O> UploadCommandBuilder<Missing<state::ExtrinsicOptions>, O> {
+impl UploadCommandBuilder<Missing<state::ExtrinsicOptions>> {
     /// Sets the extrinsic operation.
     pub fn extrinsic_opts(
         self,
         extrinsic_opts: ExtrinsicOpts,
-    ) -> UploadCommandBuilder<state::ExtrinsicOptions, O> {
+    ) -> UploadCommandBuilder<state::ExtrinsicOptions> {
         UploadCommandBuilder {
             opts: UploadCommand {
                 extrinsic_opts,
@@ -93,23 +89,16 @@ impl<O> UploadCommandBuilder<Missing<state::ExtrinsicOptions>, O> {
     }
 }
 
-impl<E> UploadCommandBuilder<E, Missing<state::OutputJson>> {
+impl<E> UploadCommandBuilder<E> {
     /// Sets whether to export the call output in JSON format.
-    pub fn output_json(
-        self,
-        output_json: bool,
-    ) -> UploadCommandBuilder<E, state::OutputJson> {
-        UploadCommandBuilder {
-            opts: UploadCommand {
-                output_json,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
     }
 }
 
-impl UploadCommandBuilder<state::ExtrinsicOptions, state::OutputJson> {
+impl UploadCommandBuilder<state::ExtrinsicOptions> {
     /// Finishes construction of the upload command.
     pub fn done(self) -> UploadCommand {
         self.opts
@@ -119,20 +108,10 @@ impl UploadCommandBuilder<state::ExtrinsicOptions, state::OutputJson> {
 #[allow(clippy::new_ret_no_self)]
 impl UploadCommand {
     /// Creates a new `UploadCommand` instance.
-    pub fn new(
-    ) -> UploadCommandBuilder<Missing<state::ExtrinsicOptions>, Missing<state::OutputJson>>
-    {
-        // we need to create a dummy extrinsic opts to pass it to `UploadCommandBuilder`
-        let dummy_extrinsic_opts = ExtrinsicOpts::new()
-            .suri("".to_string())
-            .verbosity(VerbosityFlags::default())
-            .execute(false)
-            .skip_dry_run(false)
-            .skip_confirm(false)
-            .done();
+    pub fn new() -> UploadCommandBuilder<Missing<state::ExtrinsicOptions>> {
         UploadCommandBuilder {
             opts: Self {
-                extrinsic_opts: dummy_extrinsic_opts,
+                extrinsic_opts: ExtrinsicOpts::default(),
                 output_json: false,
             },
             marker: PhantomData,

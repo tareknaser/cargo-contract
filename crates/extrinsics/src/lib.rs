@@ -166,26 +166,17 @@ mod state {
 
     /// Type state for the Secret key URI.
     pub struct Suri;
-    /// Type state for the `Verbosity` of the extrinsic operation.
-    pub struct Verbosity;
-    /// Type state for whether to submit the extrinsic for on-chain execution.
-    pub struct Execute;
-    /// Type state for whether to dry-run the transaction before submitting it.
-    pub struct SkipDryRun;
-    /// Type state for whether to skip the confirmation prompt.
-    pub struct SkipConfirm;
 }
 
 /// A builder for extrinsic options.
-#[allow(clippy::type_complexity)]
-pub struct ExtrinsicOptsBuilder<Suri, Verbosity, Execute, SkipDryRun, SkipConfirm> {
+pub struct ExtrinsicOptsBuilder<Suri> {
     opts: ExtrinsicOpts,
-    marker: PhantomData<fn() -> (Suri, Verbosity, Execute, SkipDryRun, SkipConfirm)>,
+    marker: PhantomData<fn() -> Suri>,
 }
 
-impl<V, E, SD, SC> ExtrinsicOptsBuilder<Missing<state::Suri>, V, E, SD, SC> {
+impl ExtrinsicOptsBuilder<Missing<state::Suri>> {
     /// Sets the secret key URI for the account deploying the contract.
-    pub fn suri(self, suri: String) -> ExtrinsicOptsBuilder<state::Suri, V, E, SD, SC> {
+    pub fn suri(self, suri: String) -> ExtrinsicOptsBuilder<state::Suri> {
         ExtrinsicOptsBuilder {
             opts: ExtrinsicOpts { suri, ..self.opts },
             marker: PhantomData,
@@ -193,78 +184,7 @@ impl<V, E, SD, SC> ExtrinsicOptsBuilder<Missing<state::Suri>, V, E, SD, SC> {
     }
 }
 
-impl<S, E, SD, SC> ExtrinsicOptsBuilder<S, Missing<state::Verbosity>, E, SD, SC> {
-    /// Sets the verbosity level.
-    pub fn verbosity(
-        self,
-        verbosity: VerbosityFlags,
-    ) -> ExtrinsicOptsBuilder<S, state::Verbosity, E, SD, SC> {
-        ExtrinsicOptsBuilder {
-            opts: ExtrinsicOpts {
-                verbosity,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<S, V, SD, SC> ExtrinsicOptsBuilder<S, V, Missing<state::Execute>, SD, SC> {
-    /// Sets whether to submit the extrinsic for on-chain execution.
-    pub fn execute(
-        self,
-        execute: bool,
-    ) -> ExtrinsicOptsBuilder<S, V, state::Execute, SD, SC> {
-        ExtrinsicOptsBuilder {
-            opts: ExtrinsicOpts {
-                execute,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<S, V, E, SC> ExtrinsicOptsBuilder<S, V, E, Missing<state::SkipDryRun>, SC> {
-    /// Sets whether to dry-run the transaction before submitting it.
-    pub fn skip_dry_run(
-        self,
-        skip_dry_run: bool,
-    ) -> ExtrinsicOptsBuilder<S, V, E, state::SkipDryRun, SC> {
-        ExtrinsicOptsBuilder {
-            opts: ExtrinsicOpts {
-                skip_dry_run,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<S, V, E, SD> ExtrinsicOptsBuilder<S, V, E, SD, Missing<state::SkipConfirm>> {
-    /// Sets whether to skip the confirmation prompt.
-    pub fn skip_confirm(
-        self,
-        skip_confirm: bool,
-    ) -> ExtrinsicOptsBuilder<S, V, E, SD, state::SkipConfirm> {
-        ExtrinsicOptsBuilder {
-            opts: ExtrinsicOpts {
-                skip_confirm,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<S, V, E, SD, SC> ExtrinsicOptsBuilder<S, V, E, SD, SC> {
-    /// Sets the websockets url of a substrate node.
-    pub fn url(self, url: url::Url) -> Self {
-        let mut this = self;
-        this.opts.url = url;
-        this
-    }
-
+impl<S> ExtrinsicOptsBuilder<S> {
     /// Sets the path to the contract build artifact file.
     pub fn file(self, file: PathBuf) -> Self {
         let mut this = self;
@@ -279,10 +199,31 @@ impl<S, V, E, SD, SC> ExtrinsicOptsBuilder<S, V, E, SD, SC> {
         this
     }
 
+    /// Sets the websockets url of a substrate node.
+    pub fn url(self, url: url::Url) -> Self {
+        let mut this = self;
+        this.opts.url = url;
+        this
+    }
+
     /// Sets the password for the secret key.
     pub fn password(self, password: String) -> Self {
         let mut this = self;
         this.opts.password = Some(password);
+        this
+    }
+
+    /// Sets the verbosity level.
+    pub fn verbosity(self, verbosity: VerbosityFlags) -> Self {
+        let mut this = self;
+        this.opts.verbosity = verbosity;
+        this
+    }
+
+    /// Sets whether to submit the extrinsic for on-chain execution.
+    pub fn execute(self, execute: bool) -> Self {
+        let mut this = self;
+        this.opts.execute = execute;
         this
     }
 
@@ -293,34 +234,33 @@ impl<S, V, E, SD, SC> ExtrinsicOptsBuilder<S, V, E, SD, SC> {
         this.opts.storage_deposit_limit = Some(storage_deposit_limit);
         this
     }
+
+    /// Sets whether to dry-run the transaction before submitting it.
+    pub fn skip_dry_run(self, skip_dry_run: bool) -> Self {
+        let mut this = self;
+        this.opts.skip_dry_run = skip_dry_run;
+        this
+    }
+
+    /// Sets whether to skip the confirmation prompt.
+    pub fn skip_confirm(self, skip_confirm: bool) -> Self {
+        let mut this = self;
+        this.opts.skip_confirm = skip_confirm;
+        this
+    }
 }
 
-impl
-    ExtrinsicOptsBuilder<
-        state::Suri,
-        state::Verbosity,
-        state::Execute,
-        state::SkipDryRun,
-        state::SkipConfirm,
-    >
-{
+impl ExtrinsicOptsBuilder<state::Suri> {
     /// Finishes construction of the extrinsic options.
     pub fn done(self) -> ExtrinsicOpts {
         self.opts
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[allow(clippy::new_ret_no_self)]
 impl ExtrinsicOpts {
     /// Creates a new `ExtrinsicOpts` instance.
-    pub fn new() -> ExtrinsicOptsBuilder<
-        Missing<state::Suri>,
-        Missing<state::Verbosity>,
-        Missing<state::Execute>,
-        Missing<state::SkipDryRun>,
-        Missing<state::SkipConfirm>,
-    > {
+    pub fn new() -> ExtrinsicOptsBuilder<Missing<state::Suri>> {
         ExtrinsicOptsBuilder {
             opts: Self {
                 file: None,
@@ -380,6 +320,12 @@ impl ExtrinsicOpts {
             .map(|bv| bv.denominate_balance(token_metadata))
             .transpose()?
             .map(Into::into))
+    }
+}
+
+impl Default for ExtrinsicOpts {
+    fn default() -> Self {
+        ExtrinsicOpts::new().suri("Alice".to_string()).done()
     }
 }
 

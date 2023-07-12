@@ -34,7 +34,6 @@ use super::{
     PairSigner,
     StorageDeposit,
     TokenMetadata,
-    VerbosityFlags,
     DEFAULT_KEY_COL_WIDTH,
     MAX_KEY_COL_WIDTH,
 };
@@ -99,47 +98,21 @@ mod state {
     //! Type states that tell what state of the Upload Command has not
     //! yet been set properly for a valid construction.
 
-    /// Type state for the address of the the contract to call.
-    pub struct Contract;
     /// Type state for the name of the contract message to call.
     pub struct Message;
-    /// Type state for the arguments of the contract message to call.
-    pub struct Args;
     /// Type state for extrinsic options.
     pub struct ExtrinsicOptions;
-    /// Type state for whether to export the call output in JSON format.
-    pub struct OutputJson;
 }
 
 /// A builder for the call command.
-#[allow(clippy::type_complexity)]
-pub struct CallCommandBuilder<Contract, Message, Args, ExtrinsicOptions, OutputJson> {
+pub struct CallCommandBuilder<Message, ExtrinsicOptions> {
     opts: CallCommand,
-    marker: PhantomData<fn() -> (Contract, Message, Args, ExtrinsicOptions, OutputJson)>,
+    marker: PhantomData<fn() -> (Message, ExtrinsicOptions)>,
 }
 
-impl<M, A, E, O> CallCommandBuilder<Missing<state::Contract>, M, A, E, O> {
-    /// Sets the the address of the the contract to call.
-    pub fn contract(
-        self,
-        contract: <DefaultConfig as Config>::AccountId,
-    ) -> CallCommandBuilder<state::Contract, M, A, E, O> {
-        CallCommandBuilder {
-            opts: CallCommand {
-                contract,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<C, A, E, O> CallCommandBuilder<C, Missing<state::Message>, A, E, O> {
+impl<E> CallCommandBuilder<Missing<state::Message>, E> {
     /// Sets the name of the contract message to call.
-    pub fn message(
-        self,
-        message: String,
-    ) -> CallCommandBuilder<C, state::Message, A, E, O> {
+    pub fn message(self, message: String) -> CallCommandBuilder<state::Message, E> {
         CallCommandBuilder {
             opts: CallCommand {
                 message,
@@ -150,22 +123,12 @@ impl<C, A, E, O> CallCommandBuilder<C, Missing<state::Message>, A, E, O> {
     }
 }
 
-impl<C, M, E, O> CallCommandBuilder<C, M, Missing<state::Args>, E, O> {
-    /// Sets the arguments of the contract message to call.
-    pub fn args(self, args: Vec<String>) -> CallCommandBuilder<C, M, state::Args, E, O> {
-        CallCommandBuilder {
-            opts: CallCommand { args, ..self.opts },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<C, M, A, O> CallCommandBuilder<C, M, A, Missing<state::ExtrinsicOptions>, O> {
+impl<M> CallCommandBuilder<M, Missing<state::ExtrinsicOptions>> {
     /// Sets the extrinsic operation.
     pub fn extrinsic_opts(
         self,
         extrinsic_opts: ExtrinsicOpts,
-    ) -> CallCommandBuilder<C, M, A, state::ExtrinsicOptions, O> {
+    ) -> CallCommandBuilder<M, state::ExtrinsicOptions> {
         CallCommandBuilder {
             opts: CallCommand {
                 extrinsic_opts,
@@ -176,23 +139,21 @@ impl<C, M, A, O> CallCommandBuilder<C, M, A, Missing<state::ExtrinsicOptions>, O
     }
 }
 
-impl<C, M, A, E> CallCommandBuilder<C, M, A, E, Missing<state::OutputJson>> {
-    /// Sets whether to export the call output in JSON format.
-    pub fn output_json(
-        self,
-        output_json: bool,
-    ) -> CallCommandBuilder<C, M, A, E, state::OutputJson> {
-        CallCommandBuilder {
-            opts: CallCommand {
-                output_json,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
+impl<M, E> CallCommandBuilder<M, E> {
+    /// Sets the the address of the the contract to call.
+    pub fn contract(self, contract: <DefaultConfig as Config>::AccountId) -> Self {
+        let mut this = self;
+        this.opts.contract = contract;
+        this
     }
-}
 
-impl<C, M, A, E, O> CallCommandBuilder<C, M, A, E, O> {
+    /// Sets the arguments of the contract message to call.
+    pub fn args(self, args: Vec<String>) -> Self {
+        let mut this = self;
+        this.opts.args = args;
+        this
+    }
+
     /// Sets the maximum amount of gas to be used for this command.
     pub fn gas_limit(self, gas_limit: u64) -> Self {
         let mut this = self;
@@ -213,48 +174,34 @@ impl<C, M, A, E, O> CallCommandBuilder<C, M, A, E, O> {
         this.opts.value = value;
         this
     }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
 }
 
-impl
-    CallCommandBuilder<
-        state::Contract,
-        state::Message,
-        state::Args,
-        state::ExtrinsicOptions,
-        state::OutputJson,
-    >
-{
+impl CallCommandBuilder<state::Message, state::ExtrinsicOptions> {
     /// Finishes construction of the call command.
     pub fn done(self) -> CallCommand {
         self.opts
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[allow(clippy::new_ret_no_self)]
 impl CallCommand {
     /// Creates a new `CallCommand` instance.
-    pub fn new() -> CallCommandBuilder<
-        Missing<state::Contract>,
-        Missing<state::Message>,
-        Missing<state::Args>,
-        Missing<state::ExtrinsicOptions>,
-        Missing<state::OutputJson>,
-    > {
-        // we need to create a dummy extrinsic opts to pass it to `UploadCommandBuilder`
-        let dummy_extrinsic_opts = ExtrinsicOpts::new()
-            .suri("".to_string())
-            .verbosity(VerbosityFlags::default())
-            .execute(false)
-            .skip_dry_run(false)
-            .skip_confirm(false)
-            .done();
+    pub fn new(
+    ) -> CallCommandBuilder<Missing<state::Message>, Missing<state::ExtrinsicOptions>>
+    {
         CallCommandBuilder {
             opts: Self {
                 contract: AccountId32([0; 32]),
                 message: String::new(),
                 args: Vec::new(),
-                extrinsic_opts: dummy_extrinsic_opts,
+                extrinsic_opts: ExtrinsicOpts::default(),
                 gas_limit: None,
                 proof_size: None,
                 value: "0".parse().unwrap(),

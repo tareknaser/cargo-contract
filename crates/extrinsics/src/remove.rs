@@ -31,7 +31,6 @@ use super::{
     ExtrinsicOpts,
     PairSigner,
     TokenMetadata,
-    VerbosityFlags,
 };
 use anyhow::Result;
 use core::marker::PhantomData;
@@ -65,23 +64,20 @@ mod state {
 
     /// Type state for extrinsic options.
     pub struct ExtrinsicOptions;
-    /// Type state for whether to export the call output in JSON format.
-    pub struct OutputJson;
 }
 
 /// A builder for the remove command.
-#[allow(clippy::type_complexity)]
-pub struct RemoveCommandBuilder<ExtrinsicOptions, OutputJson> {
+pub struct RemoveCommandBuilder<ExtrinsicOptions> {
     opts: RemoveCommand,
-    marker: PhantomData<fn() -> (ExtrinsicOptions, OutputJson)>,
+    marker: PhantomData<fn() -> ExtrinsicOptions>,
 }
 
-impl<O> RemoveCommandBuilder<Missing<state::ExtrinsicOptions>, O> {
+impl RemoveCommandBuilder<Missing<state::ExtrinsicOptions>> {
     /// Sets the extrinsic operation.
     pub fn extrinsic_opts(
         self,
         extrinsic_opts: ExtrinsicOpts,
-    ) -> RemoveCommandBuilder<state::ExtrinsicOptions, O> {
+    ) -> RemoveCommandBuilder<state::ExtrinsicOptions> {
         RemoveCommandBuilder {
             opts: RemoveCommand {
                 extrinsic_opts,
@@ -92,32 +88,23 @@ impl<O> RemoveCommandBuilder<Missing<state::ExtrinsicOptions>, O> {
     }
 }
 
-impl<E> RemoveCommandBuilder<E, Missing<state::OutputJson>> {
-    /// Sets whether to export the call output in JSON format.
-    pub fn output_json(
-        self,
-        output_json: bool,
-    ) -> RemoveCommandBuilder<E, state::OutputJson> {
-        RemoveCommandBuilder {
-            opts: RemoveCommand {
-                output_json,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<E, O> RemoveCommandBuilder<E, O> {
+impl<E> RemoveCommandBuilder<E> {
     /// Sets the hash of the smart contract code already uploaded to the chain.
     pub fn code_hash(self, code_hash: Option<<DefaultConfig as Config>::Hash>) -> Self {
         let mut this = self;
         this.opts.code_hash = code_hash;
         this
     }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
 }
 
-impl RemoveCommandBuilder<state::ExtrinsicOptions, state::OutputJson> {
+impl RemoveCommandBuilder<state::ExtrinsicOptions> {
     /// Finishes construction of the remove command.
     pub fn done(self) -> RemoveCommand {
         self.opts
@@ -127,21 +114,11 @@ impl RemoveCommandBuilder<state::ExtrinsicOptions, state::OutputJson> {
 #[allow(clippy::new_ret_no_self)]
 impl RemoveCommand {
     /// Creates a new `RemoveCommand` instance.
-    pub fn new(
-    ) -> RemoveCommandBuilder<Missing<state::ExtrinsicOptions>, Missing<state::OutputJson>>
-    {
-        // we need to create a dummy extrinsic opts to pass it to `UploadCommandBuilder`
-        let dummy_extrinsic_opts = ExtrinsicOpts::new()
-            .suri("".to_string())
-            .verbosity(VerbosityFlags::default())
-            .execute(false)
-            .skip_dry_run(false)
-            .skip_confirm(false)
-            .done();
+    pub fn new() -> RemoveCommandBuilder<Missing<state::ExtrinsicOptions>> {
         RemoveCommandBuilder {
             opts: Self {
                 code_hash: None,
-                extrinsic_opts: dummy_extrinsic_opts,
+                extrinsic_opts: ExtrinsicOpts::default(),
                 output_json: false,
             },
             marker: PhantomData,

@@ -34,7 +34,6 @@ use super::{
     PairSigner,
     StorageDeposit,
     TokenMetadata,
-    VerbosityFlags,
     DEFAULT_KEY_COL_WIDTH,
     MAX_KEY_COL_WIDTH,
 };
@@ -102,37 +101,22 @@ mod state {
     //! Type states that tell what state of the Upload Command has not
     //! yet been set properly for a valid construction.
 
-    /// Type state for the constructor arguments, encoded as strings.
-    pub struct Args;
     /// Type state for extrinsic options.
     pub struct ExtrinsicOptions;
-    /// Type state for whether to export the call output in JSON format.
-    pub struct OutputJson;
 }
 
 /// A builder for the instantiate command.
-#[allow(clippy::type_complexity)]
-pub struct InstantiateCommandBuilder<Args, ExtrinsicOptions, OutputJson> {
+pub struct InstantiateCommandBuilder<ExtrinsicOptions> {
     opts: InstantiateCommand,
-    marker: PhantomData<fn() -> (Args, ExtrinsicOptions, OutputJson)>,
+    marker: PhantomData<fn() -> ExtrinsicOptions>,
 }
 
-impl<E, O> InstantiateCommandBuilder<Missing<state::Args>, E, O> {
-    /// Sets the constructor arguments.
-    pub fn args(self, args: Vec<String>) -> InstantiateCommandBuilder<state::Args, E, O> {
-        InstantiateCommandBuilder {
-            opts: InstantiateCommand { args, ..self.opts },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<A, O> InstantiateCommandBuilder<A, Missing<state::ExtrinsicOptions>, O> {
+impl InstantiateCommandBuilder<Missing<state::ExtrinsicOptions>> {
     /// Sets the extrinsic operation.
     pub fn extrinsic_opts(
         self,
         extrinsic_opts: ExtrinsicOpts,
-    ) -> InstantiateCommandBuilder<A, state::ExtrinsicOptions, O> {
+    ) -> InstantiateCommandBuilder<state::ExtrinsicOptions> {
         InstantiateCommandBuilder {
             opts: InstantiateCommand {
                 extrinsic_opts,
@@ -143,34 +127,18 @@ impl<A, O> InstantiateCommandBuilder<A, Missing<state::ExtrinsicOptions>, O> {
     }
 }
 
-impl<A, E> InstantiateCommandBuilder<A, E, Missing<state::OutputJson>> {
-    /// Sets whether to export the call output in JSON format.
-    pub fn output_json(
-        self,
-        output_json: bool,
-    ) -> InstantiateCommandBuilder<A, E, state::OutputJson> {
-        InstantiateCommandBuilder {
-            opts: InstantiateCommand {
-                output_json,
-                ..self.opts
-            },
-            marker: PhantomData,
-        }
-    }
-}
-
-impl InstantiateCommandBuilder<state::Args, state::ExtrinsicOptions, state::OutputJson> {
-    /// Finishes construction of the instantiate command.
-    pub fn done(self) -> InstantiateCommand {
-        self.opts
-    }
-}
-
-impl<A, E, O> InstantiateCommandBuilder<A, E, O> {
+impl<E> InstantiateCommandBuilder<E> {
     /// Sets the name of the contract constructor to call.
     pub fn constructor(self, constructor: String) -> Self {
         let mut this = self;
         this.opts.constructor = constructor;
+        this
+    }
+
+    /// Sets the constructor arguments.
+    pub fn args(self, args: Vec<String>) -> Self {
+        let mut this = self;
+        this.opts.args = args;
         this
     }
 
@@ -201,6 +169,20 @@ impl<A, E, O> InstantiateCommandBuilder<A, E, O> {
         this.opts.salt = Some(salt);
         this
     }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
+}
+
+impl InstantiateCommandBuilder<state::ExtrinsicOptions> {
+    /// Finishes construction of the instantiate command.
+    pub fn done(self) -> InstantiateCommand {
+        self.opts
+    }
 }
 
 /// Parse hex encoded bytes.
@@ -212,24 +194,12 @@ fn parse_hex_bytes(input: &str) -> Result<Bytes> {
 #[allow(clippy::new_ret_no_self)]
 impl InstantiateCommand {
     /// Creates a new `InstantiateCommand` instance.
-    pub fn new() -> InstantiateCommandBuilder<
-        Missing<state::Args>,
-        Missing<state::ExtrinsicOptions>,
-        Missing<state::OutputJson>,
-    > {
-        // we need to create a dummy extrinsic opts to pass it to `UploadCommandBuilder`
-        let dummy_extrinsic_opts = ExtrinsicOpts::new()
-            .suri("".to_string())
-            .verbosity(VerbosityFlags::default())
-            .execute(false)
-            .skip_dry_run(false)
-            .skip_confirm(false)
-            .done();
+    pub fn new() -> InstantiateCommandBuilder<Missing<state::ExtrinsicOptions>> {
         InstantiateCommandBuilder {
             opts: Self {
                 constructor: String::from("new"),
                 args: Vec::new(),
-                extrinsic_opts: dummy_extrinsic_opts,
+                extrinsic_opts: ExtrinsicOpts::default(),
                 value: "0".parse().unwrap(),
                 gas_limit: None,
                 proof_size: None,
