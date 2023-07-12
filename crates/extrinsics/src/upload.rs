@@ -22,6 +22,7 @@ use super::{
         self,
         runtime_types::pallet_contracts::wasm::Determinism,
     },
+    state,
     state_call,
     submit_extrinsic,
     Balance,
@@ -30,6 +31,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     TokenMetadata,
     WasmCode,
@@ -53,18 +55,6 @@ pub struct UploadCommand {
     /// Export the call output in JSON format.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
-}
-
-/// Type state for `UploadCommandBuilder` to tell that some mandatory state has not yet
-/// been set yet or to fail upon setting the same state multiple times.
-pub struct Missing<S>(PhantomData<fn() -> S>);
-
-mod state {
-    //! Type states that tell what state of the Upload Command has not
-    //! yet been set properly for a valid construction.
-
-    /// Type state for extrinsic options.
-    pub struct ExtrinsicOptions;
 }
 
 /// A builder for the upload command.

@@ -21,6 +21,7 @@ use super::{
     events::DisplayEvents,
     prompt_confirm_tx,
     runtime_api::api,
+    state,
     state_call,
     submit_extrinsic,
     AccountId32,
@@ -31,6 +32,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     StorageDeposit,
     TokenMetadata,
@@ -88,20 +90,6 @@ pub struct CallCommand {
     /// Export the call output in JSON format.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
-}
-
-/// Type state for `CallCommandBuilder` to tell that some mandatory state has not
-/// yet been set yet or to fail upon setting the same state multiple times.
-pub struct Missing<S>(PhantomData<fn() -> S>);
-
-mod state {
-    //! Type states that tell what state of the Upload Command has not
-    //! yet been set properly for a valid construction.
-
-    /// Type state for the name of the contract message to call.
-    pub struct Message;
-    /// Type state for extrinsic options.
-    pub struct ExtrinsicOptions;
 }
 
 /// A builder for the call command.

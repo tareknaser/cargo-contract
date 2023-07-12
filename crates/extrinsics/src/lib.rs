@@ -156,16 +156,20 @@ pub struct ExtrinsicOpts {
     skip_confirm: bool,
 }
 
-/// Type state for `ExtrinsicOptsBuilder` to tell that some mandatory state has not yet
+/// Type state for the extrinsics' commands to tell that some mandatory state has not yet
 /// been set yet or to fail upon setting the same state multiple times.
 pub struct Missing<S>(PhantomData<fn() -> S>);
 
 mod state {
-    //! Type states that tell what state of the Extrinsics Options has not
+    //! Type states that tell what state of the commands has not
     //! yet been set properly for a valid construction.
 
     /// Type state for the Secret key URI.
     pub struct Suri;
+    /// Type state for extrinsic options.
+    pub struct ExtrinsicOptions;
+    /// Type state for the name of the contract message to call.
+    pub struct Message;
 }
 
 /// A builder for extrinsic options.

@@ -22,6 +22,7 @@ use super::{
         self,
         contracts::events::CodeRemoved,
     },
+    state,
     submit_extrinsic,
     Client,
     CodeHash,
@@ -29,6 +30,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     TokenMetadata,
 };
@@ -52,18 +54,6 @@ pub struct RemoveCommand {
     /// Export the call output as JSON.
     #[clap(long, conflicts_with = "verbose")]
     output_json: bool,
-}
-
-/// Type state for `RemoveCommandBuilder` to tell that some mandatory state has not
-/// yet been set yet or to fail upon setting the same state multiple times.
-pub struct Missing<S>(PhantomData<fn() -> S>);
-
-mod state {
-    //! Type states that tell what state of the Upload Command has not
-    //! yet been set properly for a valid construction.
-
-    /// Type state for extrinsic options.
-    pub struct ExtrinsicOptions;
 }
 
 /// A builder for the remove command.
