@@ -36,6 +36,7 @@ use anyhow::{
     Result,
 };
 use colored::Colorize;
+use core::marker::PhantomData;
 use jsonrpsee::{
     core::client::ClientT,
     rpc_params,
@@ -85,17 +86,31 @@ pub use balance::{
     BalanceVariant,
     TokenMetadata,
 };
-pub use call::CallCommand;
+pub use call::{
+    CallCommand,
+    CallDryRunResult,
+    CallRequest,
+};
 use contract_metadata::ContractMetadata;
 pub use contract_transcode::ContractMessageTranscoder;
-pub use error::{
-    ErrorVariant,
-    GenericError,
+pub use error::ErrorVariant;
+pub use instantiate::{
+    Code,
+    InstantiateArgs,
+    InstantiateCommand,
+    InstantiateDryRunResult,
+    InstantiateExec,
+    InstantiateExecResult,
+    InstantiateResult,
 };
-pub use instantiate::InstantiateCommand;
 pub use remove::RemoveCommand;
 pub use subxt::PolkadotConfig as DefaultConfig;
-pub use upload::UploadCommand;
+pub use upload::{
+    CodeUploadRequest,
+    UploadCommand,
+    UploadDryRunResult,
+    UploadResult,
+};
 
 type PairSigner = tx::PairSigner<DefaultConfig, sr25519::Pair>;
 pub type Client = OnlineClient<DefaultConfig>;
@@ -143,7 +158,132 @@ pub struct ExtrinsicOpts {
     skip_confirm: bool,
 }
 
+/// Type state for the extrinsics' commands to tell that some mandatory state has not yet
+/// been set yet or to fail upon setting the same state multiple times.
+pub struct Missing<S>(PhantomData<fn() -> S>);
+
+mod state {
+    //! Type states that tell what state of the commands has not
+    //! yet been set properly for a valid construction.
+
+    /// Type state for the Secret key URI.
+    pub struct Suri;
+    /// Type state for extrinsic options.
+    pub struct ExtrinsicOptions;
+    /// Type state for the name of the contract message to call.
+    pub struct Message;
+}
+
+/// A builder for extrinsic options.
+pub struct ExtrinsicOptsBuilder<Suri> {
+    opts: ExtrinsicOpts,
+    marker: PhantomData<fn() -> Suri>,
+}
+
+impl ExtrinsicOptsBuilder<Missing<state::Suri>> {
+    /// Sets the secret key URI for the account deploying the contract.
+    pub fn suri(self, suri: String) -> ExtrinsicOptsBuilder<state::Suri> {
+        ExtrinsicOptsBuilder {
+            opts: ExtrinsicOpts { suri, ..self.opts },
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<S> ExtrinsicOptsBuilder<S> {
+    /// Sets the path to the contract build artifact file.
+    pub fn file(self, file: PathBuf) -> Self {
+        let mut this = self;
+        this.opts.file = Some(file);
+        this
+    }
+
+    /// Sets the path to the Cargo.toml of the contract.
+    pub fn manifest_path(self, manifest_path: PathBuf) -> Self {
+        let mut this = self;
+        this.opts.manifest_path = Some(manifest_path);
+        this
+    }
+
+    /// Sets the websockets url of a substrate node.
+    pub fn url(self, url: url::Url) -> Self {
+        let mut this = self;
+        this.opts.url = url;
+        this
+    }
+
+    /// Sets the password for the secret key.
+    pub fn password(self, password: String) -> Self {
+        let mut this = self;
+        this.opts.password = Some(password);
+        this
+    }
+
+    /// Sets the verbosity level.
+    pub fn verbosity(self, verbosity: VerbosityFlags) -> Self {
+        let mut this = self;
+        this.opts.verbosity = verbosity;
+        this
+    }
+
+    /// Sets whether to submit the extrinsic for on-chain execution.
+    pub fn execute(self, execute: bool) -> Self {
+        let mut this = self;
+        this.opts.execute = execute;
+        this
+    }
+
+    /// Sets the maximum amount of balance that can be charged from the caller to pay for
+    /// storage.
+    pub fn storage_deposit_limit(self, storage_deposit_limit: BalanceVariant) -> Self {
+        let mut this = self;
+        this.opts.storage_deposit_limit = Some(storage_deposit_limit);
+        this
+    }
+
+    /// Sets whether to dry-run the transaction before submitting it.
+    pub fn skip_dry_run(self, skip_dry_run: bool) -> Self {
+        let mut this = self;
+        this.opts.skip_dry_run = skip_dry_run;
+        this
+    }
+
+    /// Sets whether to skip the confirmation prompt.
+    pub fn skip_confirm(self, skip_confirm: bool) -> Self {
+        let mut this = self;
+        this.opts.skip_confirm = skip_confirm;
+        this
+    }
+}
+
+impl ExtrinsicOptsBuilder<state::Suri> {
+    /// Finishes construction of the extrinsic options.
+    pub fn done(self) -> ExtrinsicOpts {
+        self.opts
+    }
+}
+
+#[allow(clippy::new_ret_no_self)]
 impl ExtrinsicOpts {
+    /// Creates a new `ExtrinsicOpts` instance.
+    pub fn new() -> ExtrinsicOptsBuilder<Missing<state::Suri>> {
+        ExtrinsicOptsBuilder {
+            opts: Self {
+                file: None,
+                manifest_path: None,
+                url: url::Url::parse("ws://localhost:9944").unwrap(),
+                suri: String::new(),
+                password: None,
+                verbosity: VerbosityFlags::default(),
+                execute: false,
+                storage_deposit_limit: None,
+                skip_dry_run: false,
+                skip_confirm: false,
+            },
+            marker: PhantomData,
+        }
+    }
+
     /// Load contract artifacts.
     pub fn contract_artifacts(&self) -> Result<ContractArtifacts> {
         ContractArtifacts::from_manifest_or_file(
@@ -186,6 +326,12 @@ impl ExtrinsicOpts {
             .map(|bv| bv.denominate_balance(token_metadata))
             .transpose()?
             .map(Into::into))
+    }
+}
+
+impl Default for ExtrinsicOpts {
+    fn default() -> Self {
+        ExtrinsicOpts::new().suri("Alice".to_string()).done()
     }
 }
 

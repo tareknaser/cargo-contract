@@ -21,8 +21,10 @@ use super::{
     events::DisplayEvents,
     prompt_confirm_tx,
     runtime_api::api,
+    state,
     state_call,
     submit_extrinsic,
+    AccountId32,
     Balance,
     BalanceVariant,
     Client,
@@ -30,6 +32,7 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     StorageDeposit,
     TokenMetadata,
@@ -37,13 +40,12 @@ use super::{
     MAX_KEY_COL_WIDTH,
 };
 
-use contract_build::name_value_println;
-
 use anyhow::{
     anyhow,
     Context,
     Result,
 };
+use contract_build::name_value_println;
 
 use contract_transcode::Value;
 use pallet_contracts_primitives::ContractExecResult;
@@ -51,6 +53,7 @@ use scale::Encode;
 use sp_weights::Weight;
 use tokio::runtime::Runtime;
 
+use core::marker::PhantomData;
 use std::fmt::Debug;
 use subxt::{
     Config,
@@ -89,7 +92,113 @@ pub struct CallCommand {
     output_json: bool,
 }
 
+/// A builder for the call command.
+pub struct CallCommandBuilder<Message, ExtrinsicOptions> {
+    opts: CallCommand,
+    marker: PhantomData<fn() -> (Message, ExtrinsicOptions)>,
+}
+
+impl<E> CallCommandBuilder<Missing<state::Message>, E> {
+    /// Sets the name of the contract message to call.
+    pub fn message(self, message: String) -> CallCommandBuilder<state::Message, E> {
+        CallCommandBuilder {
+            opts: CallCommand {
+                message,
+                ..self.opts
+            },
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<M> CallCommandBuilder<M, Missing<state::ExtrinsicOptions>> {
+    /// Sets the extrinsic operation.
+    pub fn extrinsic_opts(
+        self,
+        extrinsic_opts: ExtrinsicOpts,
+    ) -> CallCommandBuilder<M, state::ExtrinsicOptions> {
+        CallCommandBuilder {
+            opts: CallCommand {
+                extrinsic_opts,
+                ..self.opts
+            },
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<M, E> CallCommandBuilder<M, E> {
+    /// Sets the the address of the the contract to call.
+    pub fn contract(self, contract: <DefaultConfig as Config>::AccountId) -> Self {
+        let mut this = self;
+        this.opts.contract = contract;
+        this
+    }
+
+    /// Sets the arguments of the contract message to call.
+    pub fn args(self, args: Vec<String>) -> Self {
+        let mut this = self;
+        this.opts.args = args;
+        this
+    }
+
+    /// Sets the maximum amount of gas to be used for this command.
+    pub fn gas_limit(self, gas_limit: u64) -> Self {
+        let mut this = self;
+        this.opts.gas_limit = Some(gas_limit);
+        this
+    }
+
+    /// Sets the maximum proof size for this call.
+    pub fn proof_size(self, proof_size: u64) -> Self {
+        let mut this = self;
+        this.opts.proof_size = Some(proof_size);
+        this
+    }
+
+    /// Sets the value to be transferred as part of the call.
+    pub fn value(self, value: BalanceVariant) -> Self {
+        let mut this = self;
+        this.opts.value = value;
+        this
+    }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
+}
+
+impl CallCommandBuilder<state::Message, state::ExtrinsicOptions> {
+    /// Finishes construction of the call command.
+    pub fn done(self) -> CallCommand {
+        self.opts
+    }
+}
+
+#[allow(clippy::new_ret_no_self)]
 impl CallCommand {
+    /// Creates a new `CallCommand` instance.
+    pub fn new(
+    ) -> CallCommandBuilder<Missing<state::Message>, Missing<state::ExtrinsicOptions>>
+    {
+        CallCommandBuilder {
+            opts: Self {
+                contract: AccountId32([0; 32]),
+                message: String::new(),
+                args: Vec::new(),
+                extrinsic_opts: ExtrinsicOpts::default(),
+                gas_limit: None,
+                proof_size: None,
+                value: "0".parse().unwrap(),
+                output_json: false,
+            },
+            marker: PhantomData,
+        }
+    }
+
     pub fn is_json(&self) -> bool {
         self.output_json
     }
@@ -158,13 +267,36 @@ impl CallCommand {
                         }
                     }
                 } else {
-                    self.call(&client, call_data, &signer, &transcoder).await?;
+                    let gas_limit = self
+                        .pre_submit_dry_run_gas_estimate(&client, &call_data, &signer, true)
+                        .await?;
+
+                    if !self.extrinsic_opts.skip_confirm {
+                        prompt_confirm_tx(|| {
+                            name_value_println!("Message", self.message, DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!("Args", self.args.join(" "), DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!(
+                                "Gas limit",
+                                gas_limit.to_string(),
+                                DEFAULT_KEY_COL_WIDTH
+                            );
+                        })?;
+                    }
+                    let token_metadata = TokenMetadata::query(&client).await?;
+                    let display_events = self.call(&client, call_data, &signer, &transcoder, gas_limit, &token_metadata).await?;
+                    let output = if self.output_json {
+                        display_events.to_json()?
+                    } else {
+                        display_events
+                            .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+                    };
+                    println!("{output}");
                 }
                 Ok(())
             })
     }
 
-    async fn call_dry_run(
+    pub async fn call_dry_run(
         &self,
         input_data: Vec<u8>,
         client: &Client,
@@ -189,38 +321,22 @@ impl CallCommand {
         state_call(&url, "ContractsApi_call", call_request).await
     }
 
-    async fn call(
+    pub async fn call(
         &self,
         client: &Client,
         data: Vec<u8>,
         signer: &PairSigner,
         transcoder: &ContractMessageTranscoder,
-    ) -> Result<(), ErrorVariant> {
+        gas_limit: Weight,
+        token_metadata: &TokenMetadata,
+    ) -> Result<DisplayEvents, ErrorVariant> {
         tracing::debug!("calling contract {:?}", self.contract);
-
-        let gas_limit = self
-            .pre_submit_dry_run_gas_estimate(client, data.clone(), signer)
-            .await?;
-
-        if !self.extrinsic_opts.skip_confirm {
-            prompt_confirm_tx(|| {
-                name_value_println!("Message", self.message, DEFAULT_KEY_COL_WIDTH);
-                name_value_println!("Args", self.args.join(" "), DEFAULT_KEY_COL_WIDTH);
-                name_value_println!(
-                    "Gas limit",
-                    gas_limit.to_string(),
-                    DEFAULT_KEY_COL_WIDTH
-                );
-            })?;
-        }
-
-        let token_metadata = TokenMetadata::query(client).await?;
 
         let call = api::tx().contracts().call(
             self.contract.clone().into(),
-            self.value.denominate_balance(&token_metadata)?,
+            self.value.denominate_balance(token_metadata)?,
             gas_limit.into(),
-            self.extrinsic_opts.storage_deposit_limit(&token_metadata)?,
+            self.extrinsic_opts.storage_deposit_limit(token_metadata)?,
             data,
         );
 
@@ -229,23 +345,16 @@ impl CallCommand {
         let display_events =
             DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
 
-        let output = if self.output_json {
-            display_events.to_json()?
-        } else {
-            display_events
-                .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
-        };
-        println!("{output}");
-
-        Ok(())
+        Ok(display_events)
     }
 
     /// Dry run the call before tx submission. Returns the gas required estimate.
     async fn pre_submit_dry_run_gas_estimate(
         &self,
         client: &Client,
-        data: Vec<u8>,
+        data: &[u8],
         signer: &PairSigner,
+        print_to_terminal: bool,
     ) -> Result<Weight> {
         if self.extrinsic_opts.skip_dry_run {
             return match (self.gas_limit, self.proof_size) {
@@ -257,13 +366,13 @@ impl CallCommand {
                 }
             };
         }
-        if !self.output_json {
+        if !self.output_json && print_to_terminal {
             super::print_dry_running_status(&self.message);
         }
-        let call_result = self.call_dry_run(data, client, signer).await?;
+        let call_result = self.call_dry_run(data.to_vec(), client, signer).await?;
         match call_result.result {
             Ok(_) => {
-                if !self.output_json {
+                if !self.output_json && print_to_terminal {
                     super::print_gas_required_success(call_result.gas_required);
                 }
                 // use user specified values where provided, otherwise use the estimates
@@ -280,8 +389,12 @@ impl CallCommand {
                 if self.output_json {
                     Err(anyhow!("{}", serde_json::to_string_pretty(&object)?))
                 } else {
-                    name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
-                    display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(&call_result)?;
+                    if print_to_terminal {
+                        name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
+                        display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
+                            &call_result,
+                        )?;
+                    }
                     Err(anyhow!("Pre-submission dry-run failed. Use --skip-dry-run to skip this step."))
                 }
             }

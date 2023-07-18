@@ -20,8 +20,10 @@ use super::{
     name_value_println,
     runtime_api::api::{
         self,
+        contracts::events::CodeStored,
         runtime_types::pallet_contracts::wasm::Determinism,
     },
+    state,
     state_call,
     submit_extrinsic,
     Balance,
@@ -30,11 +32,13 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     TokenMetadata,
     WasmCode,
 };
 use anyhow::Result;
+use core::marker::PhantomData;
 use pallet_contracts_primitives::CodeUploadResult;
 use scale::Encode;
 use std::fmt::Debug;
@@ -54,7 +58,57 @@ pub struct UploadCommand {
     output_json: bool,
 }
 
+/// A builder for the upload command.
+pub struct UploadCommandBuilder<ExtrinsicOptions> {
+    opts: UploadCommand,
+    marker: PhantomData<fn() -> ExtrinsicOptions>,
+}
+
+impl UploadCommandBuilder<Missing<state::ExtrinsicOptions>> {
+    /// Sets the extrinsic operation.
+    pub fn extrinsic_opts(
+        self,
+        extrinsic_opts: ExtrinsicOpts,
+    ) -> UploadCommandBuilder<state::ExtrinsicOptions> {
+        UploadCommandBuilder {
+            opts: UploadCommand {
+                extrinsic_opts,
+                ..self.opts
+            },
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<E> UploadCommandBuilder<E> {
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
+}
+
+impl UploadCommandBuilder<state::ExtrinsicOptions> {
+    /// Finishes construction of the upload command.
+    pub fn done(self) -> UploadCommand {
+        self.opts
+    }
+}
+
+#[allow(clippy::new_ret_no_self)]
 impl UploadCommand {
+    /// Creates a new `UploadCommand` instance.
+    pub fn new() -> UploadCommandBuilder<Missing<state::ExtrinsicOptions>> {
+        UploadCommandBuilder {
+            opts: Self {
+                extrinsic_opts: ExtrinsicOpts::default(),
+                output_json: false,
+            },
+            marker: PhantomData,
+        }
+    }
+
     pub fn is_json(&self) -> bool {
         self.output_json
     }
@@ -102,29 +156,40 @@ impl UploadCommand {
                             }
                         }
                     }
-                } else if let Some(code_stored) =
-                    self.upload_code(&client, code, &signer).await?
-                {
-                    let upload_result = UploadResult {
-                        code_hash: format!("{:?}", code_stored.code_hash),
-                    };
-                    if self.output_json {
-                        println!("{}", upload_result.to_json()?);
-                    } else {
-                        upload_result.print();
-                    }
                 } else {
-                    let code_hash = hex::encode(code_hash);
-                    return Err(anyhow::anyhow!(
-                        "This contract has already been uploaded with code hash: 0x{code_hash}"
-                    )
-                    .into())
+                    let upload_result = self.upload_code(&client, code, &signer).await?;
+                    let display_events = upload_result.display_events;
+                    let output = if self.output_json {
+                        display_events.to_json()?
+                    } else {
+                        let token_metadata = TokenMetadata::query(&client).await?;
+                        display_events.display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+                    };
+                    println!("{output}");
+                    if let Some(code_stored) =
+                        upload_result.code_stored
+                    {
+                        let upload_result = CodeHashResult {
+                            code_hash: format!("{:?}", code_stored.code_hash),
+                        };
+                        if self.output_json {
+                            println!("{}", upload_result.to_json()?);
+                        } else {
+                            upload_result.print();
+                        }
+                    } else {
+                        let code_hash = hex::encode(code_hash);
+                        return Err(anyhow::anyhow!(
+                            "This contract has already been uploaded with code hash: 0x{code_hash}"
+                        )
+                        .into())
+                    }
                 }
                 Ok(())
         })
     }
 
-    async fn upload_code_rpc(
+    pub async fn upload_code_rpc(
         &self,
         code: WasmCode,
         client: &Client,
@@ -147,12 +212,12 @@ impl UploadCommand {
         state_call(&url, "ContractsApi_upload_code", call_request).await
     }
 
-    async fn upload_code(
+    pub async fn upload_code(
         &self,
         client: &Client,
         code: WasmCode,
         signer: &PairSigner,
-    ) -> Result<Option<api::contracts::events::CodeStored>, ErrorVariant> {
+    ) -> Result<UploadResult, ErrorVariant> {
         let token_metadata = TokenMetadata::query(client).await?;
         let storage_deposit_limit =
             self.extrinsic_opts.storage_deposit_limit(&token_metadata)?;
@@ -166,16 +231,11 @@ impl UploadCommand {
         let display_events =
             DisplayEvents::from_events(&result, None, &client.metadata())?;
 
-        let output = if self.output_json {
-            display_events.to_json()?
-        } else {
-            let token_metadata = TokenMetadata::query(client).await?;
-            display_events
-                .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
-        };
-        println!("{output}");
         let code_stored = result.find_first::<api::contracts::events::CodeStored>()?;
-        Ok(code_stored)
+        Ok(UploadResult {
+            code_stored,
+            display_events,
+        })
     }
 }
 
@@ -189,8 +249,13 @@ pub struct CodeUploadRequest {
 }
 
 #[derive(serde::Serialize)]
-pub struct UploadResult {
+pub struct CodeHashResult {
     code_hash: String,
+}
+
+pub struct UploadResult {
+    code_stored: Option<CodeStored>,
+    display_events: DisplayEvents,
 }
 
 #[derive(serde::Serialize)]
@@ -200,7 +265,7 @@ pub struct UploadDryRunResult {
     deposit: Balance,
 }
 
-impl UploadResult {
+impl CodeHashResult {
     pub fn to_json(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
     }

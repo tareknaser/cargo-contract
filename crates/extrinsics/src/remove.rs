@@ -22,6 +22,7 @@ use super::{
         self,
         contracts::events::CodeRemoved,
     },
+    state,
     submit_extrinsic,
     Client,
     CodeHash,
@@ -29,10 +30,12 @@ use super::{
     DefaultConfig,
     ErrorVariant,
     ExtrinsicOpts,
+    Missing,
     PairSigner,
     TokenMetadata,
 };
 use anyhow::Result;
+use core::marker::PhantomData;
 use std::fmt::Debug;
 use subxt::{
     Config,
@@ -53,7 +56,65 @@ pub struct RemoveCommand {
     output_json: bool,
 }
 
+/// A builder for the remove command.
+pub struct RemoveCommandBuilder<ExtrinsicOptions> {
+    opts: RemoveCommand,
+    marker: PhantomData<fn() -> ExtrinsicOptions>,
+}
+
+impl RemoveCommandBuilder<Missing<state::ExtrinsicOptions>> {
+    /// Sets the extrinsic operation.
+    pub fn extrinsic_opts(
+        self,
+        extrinsic_opts: ExtrinsicOpts,
+    ) -> RemoveCommandBuilder<state::ExtrinsicOptions> {
+        RemoveCommandBuilder {
+            opts: RemoveCommand {
+                extrinsic_opts,
+                ..self.opts
+            },
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<E> RemoveCommandBuilder<E> {
+    /// Sets the hash of the smart contract code already uploaded to the chain.
+    pub fn code_hash(self, code_hash: Option<<DefaultConfig as Config>::Hash>) -> Self {
+        let mut this = self;
+        this.opts.code_hash = code_hash;
+        this
+    }
+
+    /// Sets whether to export the call output in JSON format.
+    pub fn output_json(self, output_json: bool) -> Self {
+        let mut this = self;
+        this.opts.output_json = output_json;
+        this
+    }
+}
+
+impl RemoveCommandBuilder<state::ExtrinsicOptions> {
+    /// Finishes construction of the remove command.
+    pub fn done(self) -> RemoveCommand {
+        self.opts
+    }
+}
+
+#[allow(clippy::new_ret_no_self)]
 impl RemoveCommand {
+    /// Creates a new `RemoveCommand` instance.
+    pub fn new() -> RemoveCommandBuilder<Missing<state::ExtrinsicOptions>> {
+        RemoveCommandBuilder {
+            opts: Self {
+                code_hash: None,
+                extrinsic_opts: ExtrinsicOpts::default(),
+                output_json: false,
+            },
+            marker: PhantomData,
+        }
+    }
+
     pub fn is_json(&self) -> bool {
         self.output_json
     }
@@ -85,15 +146,24 @@ impl RemoveCommand {
         Runtime::new()?.block_on(async {
             let url = self.extrinsic_opts.url_to_string();
             let client = OnlineClient::from_url(url.clone()).await?;
-            if let Some(code_removed) = self
+            let remove_result = self
                 .remove_code(
                     &client,
                     sp_core::H256(final_code_hash),
                     &signer,
                     &transcoder,
                 )
-                .await?
-            {
+                .await?;
+            let display_events = remove_result.display_events;
+            let output = if self.output_json {
+                display_events.to_json()?
+            } else {
+                let token_metadata = TokenMetadata::query(&client).await?;
+                display_events
+                    .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+            };
+            println!("{output}");
+            if let Some(code_removed) = remove_result.code_removed {
                 let remove_result = code_removed.code_hash;
 
                 if self.output_json {
@@ -113,13 +183,13 @@ impl RemoveCommand {
         })
     }
 
-    async fn remove_code(
+    pub async fn remove_code(
         &self,
         client: &Client,
         code_hash: CodeHash,
         signer: &PairSigner,
         transcoder: &ContractMessageTranscoder,
-    ) -> Result<Option<CodeRemoved>, ErrorVariant> {
+    ) -> Result<RemoveResult, ErrorVariant> {
         let call = api::tx()
             .contracts()
             .remove_code(sp_core::H256(code_hash.0));
@@ -128,15 +198,15 @@ impl RemoveCommand {
         let display_events =
             DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
 
-        let output = if self.output_json {
-            display_events.to_json()?
-        } else {
-            let token_metadata = TokenMetadata::query(client).await?;
-            display_events
-                .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
-        };
-        println!("{output}");
         let code_removed = result.find_first::<CodeRemoved>()?;
-        Ok(code_removed)
+        Ok(RemoveResult {
+            code_removed,
+            display_events,
+        })
     }
+}
+
+pub struct RemoveResult {
+    code_removed: Option<CodeRemoved>,
+    display_events: DisplayEvents,
 }
