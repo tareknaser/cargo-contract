@@ -256,73 +256,71 @@ impl InstantiateCommand {
                 output_json: self.output_json,
             };
 
-            match self.extrinsic_opts.execute {
-                false => {
-                    let result = instantiate_exec.instantiate_dry_run().await?;
-                    match instantiate_exec.do_not_execute().await {
-                        Ok(dry_run_result) => {
-                            if self.output_json {
-                                println!("{}", dry_run_result.to_json()?);
-                            } else {
-                                dry_run_result.print();
-                                display_contract_exec_result_debug::<
-                                    _,
-                                    DEFAULT_KEY_COL_WIDTH,
-                                >(&result)?;
-                                display_dry_run_result_warning("instantiate");
-                            }
-                            Ok(())
+            if !self.extrinsic_opts.execute {
+                let result = instantiate_exec.instantiate_dry_run().await?;
+                match instantiate_exec.do_not_execute().await {
+                    Ok(dry_run_result) => {
+                        if self.output_json {
+                            println!("{}", dry_run_result.to_json()?);
+                        } else {
+                            dry_run_result.print();
+                            display_contract_exec_result_debug::<
+                                _,
+                                DEFAULT_KEY_COL_WIDTH,
+                            >(&result)?;
+                            display_dry_run_result_warning("instantiate");
                         }
-                        Err(object) => {
-                            if self.output_json {
-                                return Err(object)
-                            } else {
-                                name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
-                                display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
-                                    &result,
-                                )?;
-                            }
-                            Err(object)
+                        Ok(())
+                    }
+                    Err(object) => {
+                        if self.output_json {
+                            return Err(object)
+                        } else {
+                            name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
+                            display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
+                                &result,
+                            )?;
                         }
+                        Err(object)
                     }
                 }
-                true => {
-                    tracing::debug!("instantiate data {:?}", instantiate_exec.args.data);
-                    let gas_limit = instantiate_exec
-                        .pre_submit_dry_run_gas_estimate(true)
-                        .await?;
-                    match instantiate_exec.args.code.clone() {
-                        Code::Upload(code) => {
-                            if !instantiate_exec.opts.skip_confirm {
-                                prompt_confirm_tx(|| {
-                                    instantiate_exec
-                                        .print_default_instantiate_preview(gas_limit)
-                                })?;
-                            }
-                            let instantiate_result = instantiate_exec
-                                .instantiate_with_code(code, gas_limit)
-                                .await?;
-                            instantiate_exec.display_result(instantiate_result).await?;
-                            Ok(())
+            }
+            else {
+                tracing::debug!("instantiate data {:?}", instantiate_exec.args.data);
+                let gas_limit = instantiate_exec
+                    .pre_submit_dry_run_gas_estimate(true)
+                    .await?;
+                match instantiate_exec.args.code.clone() {
+                    Code::Upload(code) => {
+                        if !instantiate_exec.opts.skip_confirm {
+                            prompt_confirm_tx(|| {
+                                instantiate_exec
+                                    .print_default_instantiate_preview(gas_limit)
+                            })?;
                         }
-                        Code::Existing(code_hash) => {
-                            if !instantiate_exec.opts.skip_confirm {
-                                prompt_confirm_tx(|| {
-                                    instantiate_exec
-                                        .print_default_instantiate_preview(gas_limit);
-                                    name_value_println!(
-                                        "Code hash",
-                                        format!("{code_hash:?}"),
-                                        DEFAULT_KEY_COL_WIDTH
-                                    );
-                                })?;
-                            }
-                            let instantiate_result = instantiate_exec
-                                .instantiate(code_hash, gas_limit)
-                                .await?;
-                            instantiate_exec.display_result(instantiate_result).await?;
-                            Ok(())
+                        let instantiate_result = instantiate_exec
+                            .instantiate_with_code(code, gas_limit)
+                            .await?;
+                        instantiate_exec.display_result(instantiate_result).await?;
+                        Ok(())
+                    }
+                    Code::Existing(code_hash) => {
+                        if !instantiate_exec.opts.skip_confirm {
+                            prompt_confirm_tx(|| {
+                                instantiate_exec
+                                    .print_default_instantiate_preview(gas_limit);
+                                name_value_println!(
+                                    "Code hash",
+                                    format!("{code_hash:?}"),
+                                    DEFAULT_KEY_COL_WIDTH
+                                );
+                            })?;
                         }
+                        let instantiate_result = instantiate_exec
+                            .instantiate(code_hash, gas_limit)
+                            .await?;
+                        instantiate_exec.display_result(instantiate_result).await?;
+                        Ok(())
                     }
                 }
             }
