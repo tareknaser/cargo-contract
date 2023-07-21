@@ -40,20 +40,20 @@ use super::{
     MAX_KEY_COL_WIDTH,
 };
 
-use contract_build::name_value_println;
-
 use anyhow::{
     anyhow,
     Context,
     Result,
 };
+use contract_build::name_value_println;
+
 use contract_transcode::Value;
-use core::marker::PhantomData;
 use pallet_contracts_primitives::ContractExecResult;
 use scale::Encode;
 use sp_weights::Weight;
 use tokio::runtime::Runtime;
 
+use core::marker::PhantomData;
 use std::fmt::Debug;
 use subxt::{
     Config,
@@ -267,13 +267,36 @@ impl CallCommand {
                         }
                     }
                 } else {
-                    self.call(&client, call_data, &signer, &transcoder).await?;
+                    let gas_limit = self
+                        .pre_submit_dry_run_gas_estimate(&client, &call_data, &signer, true)
+                        .await?;
+
+                    if !self.extrinsic_opts.skip_confirm {
+                        prompt_confirm_tx(|| {
+                            name_value_println!("Message", self.message, DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!("Args", self.args.join(" "), DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!(
+                                "Gas limit",
+                                gas_limit.to_string(),
+                                DEFAULT_KEY_COL_WIDTH
+                            );
+                        })?;
+                    }
+                    let token_metadata = TokenMetadata::query(&client).await?;
+                    let display_events = self.call(&client, call_data, &signer, &transcoder, gas_limit, &token_metadata).await?;
+                    let output = if self.output_json {
+                        display_events.to_json()?
+                    } else {
+                        display_events
+                            .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+                    };
+                    println!("{output}");
                 }
                 Ok(())
             })
     }
 
-    async fn call_dry_run(
+    pub async fn call_dry_run(
         &self,
         input_data: Vec<u8>,
         client: &Client,
@@ -298,38 +321,22 @@ impl CallCommand {
         state_call(&url, "ContractsApi_call", call_request).await
     }
 
-    async fn call(
+    pub async fn call(
         &self,
         client: &Client,
         data: Vec<u8>,
         signer: &PairSigner,
         transcoder: &ContractMessageTranscoder,
-    ) -> Result<(), ErrorVariant> {
+        gas_limit: Weight,
+        token_metadata: &TokenMetadata,
+    ) -> Result<DisplayEvents, ErrorVariant> {
         tracing::debug!("calling contract {:?}", self.contract);
-
-        let gas_limit = self
-            .pre_submit_dry_run_gas_estimate(client, data.clone(), signer)
-            .await?;
-
-        if !self.extrinsic_opts.skip_confirm {
-            prompt_confirm_tx(|| {
-                name_value_println!("Message", self.message, DEFAULT_KEY_COL_WIDTH);
-                name_value_println!("Args", self.args.join(" "), DEFAULT_KEY_COL_WIDTH);
-                name_value_println!(
-                    "Gas limit",
-                    gas_limit.to_string(),
-                    DEFAULT_KEY_COL_WIDTH
-                );
-            })?;
-        }
-
-        let token_metadata = TokenMetadata::query(client).await?;
 
         let call = api::tx().contracts().call(
             self.contract.clone().into(),
-            self.value.denominate_balance(&token_metadata)?,
+            self.value.denominate_balance(token_metadata)?,
             gas_limit.into(),
-            self.extrinsic_opts.storage_deposit_limit(&token_metadata)?,
+            self.extrinsic_opts.storage_deposit_limit(token_metadata)?,
             data,
         );
 
@@ -338,23 +345,16 @@ impl CallCommand {
         let display_events =
             DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
 
-        let output = if self.output_json {
-            display_events.to_json()?
-        } else {
-            display_events
-                .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
-        };
-        println!("{output}");
-
-        Ok(())
+        Ok(display_events)
     }
 
     /// Dry run the call before tx submission. Returns the gas required estimate.
     async fn pre_submit_dry_run_gas_estimate(
         &self,
         client: &Client,
-        data: Vec<u8>,
+        data: &[u8],
         signer: &PairSigner,
+        print_to_terminal: bool,
     ) -> Result<Weight> {
         if self.extrinsic_opts.skip_dry_run {
             return match (self.gas_limit, self.proof_size) {
@@ -366,13 +366,13 @@ impl CallCommand {
                 }
             };
         }
-        if !self.output_json {
+        if !self.output_json && print_to_terminal {
             super::print_dry_running_status(&self.message);
         }
-        let call_result = self.call_dry_run(data, client, signer).await?;
+        let call_result = self.call_dry_run(data.to_vec(), client, signer).await?;
         match call_result.result {
             Ok(_) => {
-                if !self.output_json {
+                if !self.output_json && print_to_terminal {
                     super::print_gas_required_success(call_result.gas_required);
                 }
                 // use user specified values where provided, otherwise use the estimates
@@ -389,8 +389,12 @@ impl CallCommand {
                 if self.output_json {
                     Err(anyhow!("{}", serde_json::to_string_pretty(&object)?))
                 } else {
-                    name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
-                    display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(&call_result)?;
+                    if print_to_terminal {
+                        name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
+                        display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
+                            &call_result,
+                        )?;
+                    }
                     Err(anyhow!("Pre-submission dry-run failed. Use --skip-dry-run to skip this step."))
                 }
             }

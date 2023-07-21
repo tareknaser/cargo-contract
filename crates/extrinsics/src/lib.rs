@@ -88,7 +88,8 @@ pub use balance::{
 };
 pub use call::{
     CallCommand,
-    CallCommandBuilder,
+    CallDryRunResult,
+    CallRequest,
 };
 use contract_metadata::ContractMetadata;
 pub use contract_transcode::ContractMessageTranscoder;
@@ -97,17 +98,21 @@ pub use error::{
     GenericError,
 };
 pub use instantiate::{
+    Code,
+    InstantiateArgs,
     InstantiateCommand,
-    InstantiateCommandBuilder,
+    InstantiateDryRunResult,
+    InstantiateExec,
+    InstantiateExecResult,
+    InstantiateResult,
 };
-pub use remove::{
-    RemoveCommand,
-    RemoveCommandBuilder,
-};
+pub use remove::RemoveCommand;
 pub use subxt::PolkadotConfig as DefaultConfig;
 pub use upload::{
+    CodeUploadRequest,
     UploadCommand,
-    UploadCommandBuilder,
+    UploadDryRunResult,
+    UploadResult,
 };
 
 type PairSigner = tx::PairSigner<DefaultConfig, sr25519::Pair>;

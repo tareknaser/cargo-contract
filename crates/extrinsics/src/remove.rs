@@ -146,15 +146,24 @@ impl RemoveCommand {
         Runtime::new()?.block_on(async {
             let url = self.extrinsic_opts.url_to_string();
             let client = OnlineClient::from_url(url.clone()).await?;
-            if let Some(code_removed) = self
+            let remove_result = self
                 .remove_code(
                     &client,
                     sp_core::H256(final_code_hash),
                     &signer,
                     &transcoder,
                 )
-                .await?
-            {
+                .await?;
+            let display_events = remove_result.display_events;
+            let output = if self.output_json {
+                display_events.to_json()?
+            } else {
+                let token_metadata = TokenMetadata::query(&client).await?;
+                display_events
+                    .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+            };
+            println!("{output}");
+            if let Some(code_removed) = remove_result.code_removed {
                 let remove_result = code_removed.code_hash;
 
                 if self.output_json {
@@ -174,13 +183,13 @@ impl RemoveCommand {
         })
     }
 
-    async fn remove_code(
+    pub async fn remove_code(
         &self,
         client: &Client,
         code_hash: CodeHash,
         signer: &PairSigner,
         transcoder: &ContractMessageTranscoder,
-    ) -> Result<Option<CodeRemoved>, ErrorVariant> {
+    ) -> Result<RemoveResult, ErrorVariant> {
         let call = api::tx()
             .contracts()
             .remove_code(sp_core::H256(code_hash.0));
@@ -189,15 +198,15 @@ impl RemoveCommand {
         let display_events =
             DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
 
-        let output = if self.output_json {
-            display_events.to_json()?
-        } else {
-            let token_metadata = TokenMetadata::query(client).await?;
-            display_events
-                .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
-        };
-        println!("{output}");
         let code_removed = result.find_first::<CodeRemoved>()?;
-        Ok(code_removed)
+        Ok(RemoveResult {
+            code_removed,
+            display_events,
+        })
     }
+}
+
+pub struct RemoveResult {
+    code_removed: Option<CodeRemoved>,
+    display_events: DisplayEvents,
 }
