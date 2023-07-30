@@ -49,6 +49,7 @@ use std::{
     },
     path::PathBuf,
 };
+use url::Url;
 
 use crate::runtime_api::api::{self,};
 use contract_build::{
@@ -186,9 +187,12 @@ pub struct ExtrinsicOptsBuilder<Suri> {
 
 impl ExtrinsicOptsBuilder<Missing<state::Suri>> {
     /// Sets the secret key URI for the account deploying the contract.
-    pub fn suri(self, suri: String) -> ExtrinsicOptsBuilder<state::Suri> {
+    pub fn suri<T: Into<String>>(self, suri: T) -> ExtrinsicOptsBuilder<state::Suri> {
         ExtrinsicOptsBuilder {
-            opts: ExtrinsicOpts { suri, ..self.opts },
+            opts: ExtrinsicOpts {
+                suri: suri.into(),
+                ..self.opts
+            },
             marker: PhantomData,
         }
     }
@@ -196,30 +200,30 @@ impl ExtrinsicOptsBuilder<Missing<state::Suri>> {
 
 impl<S> ExtrinsicOptsBuilder<S> {
     /// Sets the path to the contract build artifact file.
-    pub fn file(self, file: PathBuf) -> Self {
+    pub fn file<T: Into<PathBuf>>(self, file: T) -> Self {
         let mut this = self;
-        this.opts.file = Some(file);
+        this.opts.file = Some(file.into());
         this
     }
 
     /// Sets the path to the Cargo.toml of the contract.
-    pub fn manifest_path(self, manifest_path: PathBuf) -> Self {
+    pub fn manifest_path<T: Into<PathBuf>>(self, manifest_path: T) -> Self {
         let mut this = self;
-        this.opts.manifest_path = Some(manifest_path);
+        this.opts.manifest_path = Some(manifest_path.into());
         this
     }
 
     /// Sets the websockets url of a substrate node.
-    pub fn url(self, url: url::Url) -> Self {
+    pub fn url<T: Into<Url>>(self, url: T) -> Self {
         let mut this = self;
-        this.opts.url = url;
+        this.opts.url = url.into();
         this
     }
 
     /// Sets the password for the secret key.
-    pub fn password(self, password: String) -> Self {
+    pub fn password<T: Into<String>>(self, password: T) -> Self {
         let mut this = self;
-        this.opts.password = Some(password);
+        this.opts.password = Some(password.into());
         this
     }
 

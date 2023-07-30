@@ -76,9 +76,9 @@ impl RemoveCommandBuilder<Missing<state::ExtrinsicOptions>> {
 
 impl<E> RemoveCommandBuilder<E> {
     /// Sets the hash of the smart contract code already uploaded to the chain.
-    pub fn code_hash(self, code_hash: Option<<DefaultConfig as Config>::Hash>) -> Self {
+    pub fn code_hash(self, code_hash: <DefaultConfig as Config>::Hash) -> Self {
         let mut this = self;
-        this.opts.code_hash = code_hash;
+        this.opts.code_hash = Some(code_hash);
         this
     }
 

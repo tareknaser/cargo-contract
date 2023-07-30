@@ -95,10 +95,13 @@ pub struct CallCommandBuilder<Message, ExtrinsicOptions> {
 
 impl<E> CallCommandBuilder<Missing<state::Message>, E> {
     /// Sets the name of the contract message to call.
-    pub fn message(self, message: String) -> CallCommandBuilder<state::Message, E> {
+    pub fn message<T: Into<String>>(
+        self,
+        message: T,
+    ) -> CallCommandBuilder<state::Message, E> {
         CallCommandBuilder {
             opts: CallCommand {
-                message,
+                message: message.into(),
                 ..self.opts
             },
             marker: PhantomData,

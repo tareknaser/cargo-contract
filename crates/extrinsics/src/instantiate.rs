@@ -121,9 +121,9 @@ impl InstantiateCommandBuilder<Missing<state::ExtrinsicOptions>> {
 
 impl<E> InstantiateCommandBuilder<E> {
     /// Sets the name of the contract constructor to call.
-    pub fn constructor(self, constructor: String) -> Self {
+    pub fn constructor<T: Into<String>>(self, constructor: T) -> Self {
         let mut this = self;
-        this.opts.constructor = constructor;
+        this.opts.constructor = constructor.into();
         this
     }
 
