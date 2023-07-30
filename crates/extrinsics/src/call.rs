@@ -173,8 +173,9 @@ impl<M, E> CallCommandBuilder<M, E> {
 
 impl CallCommandBuilder<state::Message, state::ExtrinsicOptions> {
     /// Finishes construction of the call command.
-    pub fn done(self) -> CallCommand {
-        self.opts
+    pub async fn done(self) -> CallExec {
+        let call_command = self.opts;
+        call_command.preprocess().await.unwrap()
     }
 }
 
@@ -204,7 +205,7 @@ impl CallCommand {
     }
 
     /// Helper method for preprocessing contract artifacts.
-    pub fn preprocess(&self) -> Result<(ContractMessageTranscoder, Vec<u8>, PairSigner)> {
+    pub async fn preprocess(&self) -> Result<CallExec> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let transcoder = artifacts.contract_transcoder()?;
 
@@ -213,26 +214,37 @@ impl CallCommand {
 
         let signer = super::pair_signer(self.extrinsic_opts.signer()?);
 
-        Ok((transcoder, call_data, signer))
+        let url = self.extrinsic_opts.url_to_string();
+        let client = OnlineClient::from_url(url.clone()).await?;
+        Ok(CallExec {
+            contract: self.contract.clone(),
+            message: self.message.clone(),
+            args: self.args.clone(),
+            opts: self.extrinsic_opts.clone(),
+            gas_limit: self.gas_limit,
+            proof_size: self.proof_size,
+            value: self.value.clone(),
+            output_json: self.output_json,
+            client,
+            transcoder,
+            call_data,
+            signer,
+        })
     }
 
     pub fn run(&self) -> Result<(), ErrorVariant> {
-        let (transcoder, _, _) = self.preprocess()?;
-
         Runtime::new()?
             .block_on(async {
-                let url = self.extrinsic_opts.url_to_string();
-                let client = OnlineClient::from_url(url.clone()).await?;
-
-                if !self.extrinsic_opts.execute {
-                    let result = self
-                        .call_dry_run(&client)
+                let call_exec = self.preprocess().await?;
+                if !call_exec.opts.execute {
+                    let result = call_exec
+                        .call_dry_run()
                         .await?;
                     match result.result {
                         Ok(ref ret_val) => {
-                            let value = transcoder
+                            let value = call_exec.transcoder
                                 .decode_message_return(
-                                    &self.message,
+                                    &call_exec.message,
                                     &mut &ret_val.data[..],
                                 )
                                 .context(format!(
@@ -248,7 +260,7 @@ impl CallCommand {
                                     &result.storage_deposit,
                                 ),
                             };
-                            if self.output_json {
+                            if call_exec.output_json {
                                 println!("{}", dry_run_result.to_json()?);
                             } else {
                                 dry_run_result.print();
@@ -260,10 +272,10 @@ impl CallCommand {
                             };
                         }
                         Err(ref err) => {
-                            let metadata = client.metadata();
+                            let metadata = call_exec.client.metadata();
                             let object =
                                 ErrorVariant::from_dispatch_error(err, &metadata)?;
-                            if self.output_json {
+                            if call_exec.output_json {
                                 return Err(object)
                             } else {
                                 name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
@@ -274,14 +286,14 @@ impl CallCommand {
                         }
                     }
                 } else {
-                    let gas_limit = self
-                        .pre_submit_dry_run_gas_estimate(&client,true)
+                    let gas_limit = call_exec
+                        .pre_submit_dry_run_gas_estimate(true)
                         .await?;
 
-                    if !self.extrinsic_opts.skip_confirm {
+                    if !call_exec.opts.skip_confirm {
                         prompt_confirm_tx(|| {
-                            name_value_println!("Message", self.message, DEFAULT_KEY_COL_WIDTH);
-                            name_value_println!("Args", self.args.join(" "), DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!("Message", call_exec.message, DEFAULT_KEY_COL_WIDTH);
+                            name_value_println!("Args", call_exec.args.join(" "), DEFAULT_KEY_COL_WIDTH);
                             name_value_println!(
                                 "Gas limit",
                                 gas_limit.to_string(),
@@ -289,65 +301,76 @@ impl CallCommand {
                             );
                         })?;
                     }
-                    let token_metadata = TokenMetadata::query(&client).await?;
-                    let display_events = self.call(&client, gas_limit).await?;
-                    let output = if self.output_json {
+                    let token_metadata = TokenMetadata::query(&call_exec.client).await?;
+                    let display_events = call_exec.call(gas_limit).await?;
+                    let output = if call_exec.output_json {
                         display_events.to_json()?
                     } else {
                         display_events
-                            .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+                            .display_events(call_exec.opts.verbosity()?, &token_metadata)?
                     };
                     println!("{output}");
                 }
                 Ok(())
             })
     }
+}
 
-    pub async fn call_dry_run(
-        &self,
-        client: &Client,
-    ) -> Result<ContractExecResult<Balance, ()>> {
-        let (_, input_data, signer) = self.preprocess()?;
-        let url = self.extrinsic_opts.url_to_string();
-        let token_metadata = TokenMetadata::query(client).await?;
+pub struct CallExec {
+    contract: <DefaultConfig as Config>::AccountId,
+    message: String,
+    args: Vec<String>,
+    opts: ExtrinsicOpts,
+    gas_limit: Option<u64>,
+    proof_size: Option<u64>,
+    value: BalanceVariant,
+    output_json: bool,
+    client: Client,
+    transcoder: ContractMessageTranscoder,
+    call_data: Vec<u8>,
+    signer: PairSigner,
+}
+
+impl CallExec {
+    pub async fn call_dry_run(&self) -> Result<ContractExecResult<Balance, ()>> {
+        let url = self.opts.url_to_string();
+        let token_metadata = TokenMetadata::query(&self.client).await?;
         let storage_deposit_limit = self
-            .extrinsic_opts
+            .opts
             .storage_deposit_limit
             .as_ref()
             .map(|bv| bv.denominate_balance(&token_metadata))
             .transpose()?;
         let call_request = CallRequest {
-            origin: signer.account_id().clone(),
+            origin: self.signer.account_id().clone(),
             dest: self.contract.clone(),
             value: self.value.denominate_balance(&token_metadata)?,
             gas_limit: None,
             storage_deposit_limit,
-            input_data,
+            input_data: self.call_data.clone(),
         };
         state_call(&url, "ContractsApi_call", call_request).await
     }
 
-    pub async fn call(
-        &self,
-        client: &Client,
-        gas_limit: Weight,
-    ) -> Result<DisplayEvents, ErrorVariant> {
-        let (transcoder, data, signer) = self.preprocess()?;
+    pub async fn call(&self, gas_limit: Weight) -> Result<DisplayEvents, ErrorVariant> {
         tracing::debug!("calling contract {:?}", self.contract);
-        let token_metadata = TokenMetadata::query(client).await?;
+        let token_metadata = TokenMetadata::query(&self.client).await?;
 
         let call = api::tx().contracts().call(
             self.contract.clone().into(),
             self.value.denominate_balance(&token_metadata)?,
             gas_limit.into(),
-            self.extrinsic_opts.storage_deposit_limit(&token_metadata)?,
-            data,
+            self.opts.storage_deposit_limit(&token_metadata)?,
+            self.call_data.clone(),
         );
 
-        let result = submit_extrinsic(client, &call, &signer).await?;
+        let result = submit_extrinsic(&self.client, &call, &self.signer).await?;
 
-        let display_events =
-            DisplayEvents::from_events(&result, Some(&transcoder), &client.metadata())?;
+        let display_events = DisplayEvents::from_events(
+            &result,
+            Some(&self.transcoder),
+            &self.client.metadata(),
+        )?;
 
         Ok(display_events)
     }
@@ -355,10 +378,9 @@ impl CallCommand {
     /// Dry run the call before tx submission. Returns the gas required estimate.
     async fn pre_submit_dry_run_gas_estimate(
         &self,
-        client: &Client,
         print_to_terminal: bool,
     ) -> Result<Weight> {
-        if self.extrinsic_opts.skip_dry_run {
+        if self.opts.skip_dry_run {
             return match (self.gas_limit, self.proof_size) {
                 (Some(ref_time), Some(proof_size)) => Ok(Weight::from_parts(ref_time, proof_size)),
                 _ => {
@@ -371,7 +393,7 @@ impl CallCommand {
         if !self.output_json && print_to_terminal {
             super::print_dry_running_status(&self.message);
         }
-        let call_result = self.call_dry_run(client).await?;
+        let call_result = self.call_dry_run().await?;
         match call_result.result {
             Ok(_) => {
                 if !self.output_json && print_to_terminal {
@@ -387,7 +409,8 @@ impl CallCommand {
                 Ok(Weight::from_parts(ref_time, proof_size))
             }
             Err(ref err) => {
-                let object = ErrorVariant::from_dispatch_error(err, &client.metadata())?;
+                let object =
+                    ErrorVariant::from_dispatch_error(err, &self.client.metadata())?;
                 if self.output_json {
                     Err(anyhow!("{}", serde_json::to_string_pretty(&object)?))
                 } else {

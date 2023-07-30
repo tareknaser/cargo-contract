@@ -95,8 +95,9 @@ impl<E> RemoveCommandBuilder<E> {
 
 impl RemoveCommandBuilder<state::ExtrinsicOptions> {
     /// Finishes construction of the remove command.
-    pub fn done(self) -> RemoveCommand {
-        self.opts
+    pub async fn done(self) -> RemoveExec {
+        let remove_command = self.opts;
+        remove_command.preprocess().await.unwrap()
     }
 }
 
@@ -119,9 +120,7 @@ impl RemoveCommand {
     }
 
     /// Helper method for preprocessing contract artifacts.
-    pub fn preprocess(
-        &self,
-    ) -> Result<(ContractMessageTranscoder, PairSigner, [u8; 32])> {
+    pub async fn preprocess(&self) -> Result<RemoveExec> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let transcoder = artifacts.contract_transcoder()?;
         let signer = super::pair_signer(self.extrinsic_opts.signer()?);
@@ -138,37 +137,43 @@ impl RemoveCommand {
                 artifacts_path.display()
             )),
         }?;
+        let url = self.extrinsic_opts.url_to_string();
+        let client = OnlineClient::from_url(url.clone()).await?;
 
-        Ok((transcoder, signer, final_code_hash))
+        Ok(RemoveExec {
+            final_code_hash,
+            opts: self.extrinsic_opts.clone(),
+            output_json: self.output_json,
+            client,
+            transcoder,
+            signer,
+        })
     }
 
     pub fn run(&self) -> Result<(), ErrorVariant> {
-        let (_, _, final_code_hash) = self.preprocess()?;
-
         Runtime::new()?.block_on(async {
-            let url = self.extrinsic_opts.url_to_string();
-            let client = OnlineClient::from_url(url.clone()).await?;
-            let remove_result = self.remove_code(&client).await?;
+            let remove_exec = self.preprocess().await?;
+            let remove_result = remove_exec.remove_code().await?;
             let display_events = remove_result.display_events;
-            let output = if self.output_json {
+            let output = if remove_exec.output_json {
                 display_events.to_json()?
             } else {
-                let token_metadata = TokenMetadata::query(&client).await?;
+                let token_metadata = TokenMetadata::query(&remove_exec.client).await?;
                 display_events
-                    .display_events(self.extrinsic_opts.verbosity()?, &token_metadata)?
+                    .display_events(remove_exec.opts.verbosity()?, &token_metadata)?
             };
             println!("{output}");
             if let Some(code_removed) = remove_result.code_removed {
                 let remove_result = code_removed.code_hash;
 
-                if self.output_json {
+                if remove_exec.output_json {
                     println!("{}", &remove_result);
                 } else {
                     name_value_println!("Code hash", format!("{remove_result:?}"));
                 }
                 Result::<(), ErrorVariant>::Ok(())
             } else {
-                let error_code_hash = hex::encode(final_code_hash);
+                let error_code_hash = hex::encode(remove_exec.final_code_hash);
                 Err(anyhow::anyhow!(
                     "Error removing the code for the supplied code hash: {}",
                     error_code_hash
@@ -177,20 +182,30 @@ impl RemoveCommand {
             }
         })
     }
+}
 
-    pub async fn remove_code(
-        &self,
-        client: &Client,
-    ) -> Result<RemoveResult, ErrorVariant> {
-        let (transcoder, signer, final_code_hash) = self.preprocess()?;
-        let code_hash = sp_core::H256(final_code_hash);
+pub struct RemoveExec {
+    final_code_hash: [u8; 32],
+    opts: ExtrinsicOpts,
+    output_json: bool,
+    client: Client,
+    transcoder: ContractMessageTranscoder,
+    signer: PairSigner,
+}
+
+impl RemoveExec {
+    pub async fn remove_code(&self) -> Result<RemoveResult, ErrorVariant> {
+        let code_hash = sp_core::H256(self.final_code_hash);
         let call = api::tx()
             .contracts()
             .remove_code(sp_core::H256(code_hash.0));
 
-        let result = submit_extrinsic(client, &call, &signer).await?;
-        let display_events =
-            DisplayEvents::from_events(&result, Some(&transcoder), &client.metadata())?;
+        let result = submit_extrinsic(&self.client, &call, &self.signer).await?;
+        let display_events = DisplayEvents::from_events(
+            &result,
+            Some(&self.transcoder),
+            &self.client.metadata(),
+        )?;
 
         let code_removed = result.find_first::<CodeRemoved>()?;
         Ok(RemoveResult {

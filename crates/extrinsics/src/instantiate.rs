@@ -176,8 +176,9 @@ impl<E> InstantiateCommandBuilder<E> {
 
 impl InstantiateCommandBuilder<state::ExtrinsicOptions> {
     /// Finishes construction of the instantiate command.
-    pub fn done(self) -> InstantiateCommand {
-        self.opts
+    pub async fn done(self) -> InstantiateExec {
+        let instantiate_command = self.opts;
+        instantiate_command.preprocess().await.unwrap()
     }
 }
 
@@ -203,12 +204,9 @@ impl InstantiateCommand {
     pub fn is_json(&self) -> bool {
         self.output_json
     }
-    /// Instantiate a contract stored at the supplied code hash.
-    /// Returns the account id of the instantiated contract if successful.
-    ///
-    /// Creates an extrinsic with the `Contracts::instantiate` Call, submits via RPC, then
-    /// waits for the `ContractsEvent::Instantiated` event.
-    pub fn run(&self) -> Result<(), ErrorVariant> {
+
+    /// Helper method for preprocessing contract artifacts.
+    pub async fn preprocess(&self) -> Result<InstantiateExec> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let transcoder = artifacts.contract_transcoder()?;
         let data = transcoder.encode(&self.constructor, &self.args)?;
@@ -223,38 +221,47 @@ impl InstantiateCommand {
         };
         let salt = self.salt.clone().map(|s| s.0).unwrap_or_default();
 
+        let client = OnlineClient::from_url(url.clone()).await?;
+
+        let token_metadata = TokenMetadata::query(&client).await?;
+
+        let args = InstantiateArgs {
+            constructor: self.constructor.clone(),
+            raw_args: self.args.clone(),
+            value: self.value.denominate_balance(&token_metadata)?,
+            gas_limit: self.gas_limit,
+            proof_size: self.proof_size,
+            storage_deposit_limit: self
+                .extrinsic_opts
+                .storage_deposit_limit
+                .as_ref()
+                .map(|bv| bv.denominate_balance(&token_metadata))
+                .transpose()?,
+            code,
+            data,
+            salt,
+        };
+
+        Ok(InstantiateExec {
+            args,
+            opts: self.extrinsic_opts.clone(),
+            url,
+            client,
+            verbosity,
+            signer,
+            transcoder,
+            output_json: self.output_json,
+        })
+    }
+
+    /// Instantiate a contract stored at the supplied code hash.
+    /// Returns the account id of the instantiated contract if successful.
+    ///
+    /// Creates an extrinsic with the `Contracts::instantiate` Call, submits via RPC, then
+    /// waits for the `ContractsEvent::Instantiated` event.
+    pub fn run(&self) -> Result<(), ErrorVariant> {
         Runtime::new()?.block_on(async {
-            let client = OnlineClient::from_url(url.clone()).await?;
-
-            let token_metadata = TokenMetadata::query(&client).await?;
-
-            let args = InstantiateArgs {
-                constructor: self.constructor.clone(),
-                raw_args: self.args.clone(),
-                value: self.value.denominate_balance(&token_metadata)?,
-                gas_limit: self.gas_limit,
-                proof_size: self.proof_size,
-                storage_deposit_limit: self
-                    .extrinsic_opts
-                    .storage_deposit_limit
-                    .as_ref()
-                    .map(|bv| bv.denominate_balance(&token_metadata))
-                    .transpose()?,
-                code,
-                data,
-                salt,
-            };
-
-            let instantiate_exec = InstantiateExec {
-                args,
-                opts: self.extrinsic_opts.clone(),
-                url,
-                client,
-                verbosity,
-                signer,
-                transcoder,
-                output_json: self.output_json,
-            };
+            let instantiate_exec = self.preprocess().await?;
 
             if !self.extrinsic_opts.execute {
                 let result = instantiate_exec.instantiate_dry_run().await?;
@@ -290,39 +297,24 @@ impl InstantiateCommand {
                 let gas_limit = instantiate_exec
                     .pre_submit_dry_run_gas_estimate(true)
                     .await?;
-                match instantiate_exec.args.code.clone() {
-                    Code::Upload(code) => {
-                        if !instantiate_exec.opts.skip_confirm {
-                            prompt_confirm_tx(|| {
-                                instantiate_exec
-                                    .print_default_instantiate_preview(gas_limit)
-                            })?;
+                if !instantiate_exec.opts.skip_confirm {
+                    prompt_confirm_tx(|| {
+                        instantiate_exec
+                            .print_default_instantiate_preview(gas_limit);
+                        if let Code::Existing(code_hash) = instantiate_exec.args.code.clone() {
+                            name_value_println!(
+                                "Code hash",
+                                format!("{code_hash:?}"),
+                                DEFAULT_KEY_COL_WIDTH
+                            );
                         }
-                        let instantiate_result = instantiate_exec
-                            .instantiate_with_code(code, gas_limit)
-                            .await?;
-                        instantiate_exec.display_result(instantiate_result).await?;
-                        Ok(())
-                    }
-                    Code::Existing(code_hash) => {
-                        if !instantiate_exec.opts.skip_confirm {
-                            prompt_confirm_tx(|| {
-                                instantiate_exec
-                                    .print_default_instantiate_preview(gas_limit);
-                                name_value_println!(
-                                    "Code hash",
-                                    format!("{code_hash:?}"),
-                                    DEFAULT_KEY_COL_WIDTH
-                                );
-                            })?;
-                        }
-                        let instantiate_result = instantiate_exec
-                            .instantiate(code_hash, gas_limit)
-                            .await?;
-                        instantiate_exec.display_result(instantiate_result).await?;
-                        Ok(())
-                    }
+                    })?;
                 }
+                let instantiate_result = instantiate_exec
+                    .instantiate(gas_limit)
+                    .await?;
+                instantiate_exec.display_result(instantiate_result).await?;
+                Ok(())
             }
         })
     }
@@ -358,7 +350,7 @@ pub struct InstantiateExec {
 }
 
 impl InstantiateExec {
-    async fn do_not_execute(&self) -> Result<InstantiateDryRunResult, ErrorVariant> {
+    pub async fn do_not_execute(&self) -> Result<InstantiateDryRunResult, ErrorVariant> {
         tracing::debug!("instantiate data {:?}", self.args.data);
         let result = self.instantiate_dry_run().await?;
         match result.result {
@@ -422,7 +414,7 @@ impl InstantiateExec {
         })
     }
 
-    async fn instantiate(
+    async fn instantiate_with_code_hash(
         &self,
         code_hash: CodeHash,
         gas_limit: Weight,
@@ -451,7 +443,19 @@ impl InstantiateExec {
         })
     }
 
-    async fn display_result(
+    pub async fn instantiate(
+        &self,
+        gas_limit: Weight,
+    ) -> Result<InstantiateExecResult, ErrorVariant> {
+        match self.args.code.clone() {
+            Code::Upload(code) => self.instantiate_with_code(code, gas_limit).await,
+            Code::Existing(code_hash) => {
+                self.instantiate_with_code_hash(code_hash, gas_limit).await
+            }
+        }
+    }
+
+    pub async fn display_result(
         &self,
         instantiate_exec_result: InstantiateExecResult,
     ) -> Result<(), ErrorVariant> {
@@ -486,13 +490,13 @@ impl InstantiateExec {
         Ok(())
     }
 
-    fn print_default_instantiate_preview(&self, gas_limit: Weight) {
+    pub fn print_default_instantiate_preview(&self, gas_limit: Weight) {
         name_value_println!("Constructor", self.args.constructor, DEFAULT_KEY_COL_WIDTH);
         name_value_println!("Args", self.args.raw_args.join(" "), DEFAULT_KEY_COL_WIDTH);
         name_value_println!("Gas limit", gas_limit.to_string(), DEFAULT_KEY_COL_WIDTH);
     }
 
-    async fn instantiate_dry_run(
+    pub async fn instantiate_dry_run(
         &self,
     ) -> Result<
         ContractInstantiateResult<<DefaultConfig as Config>::AccountId, Balance, ()>,
@@ -511,7 +515,7 @@ impl InstantiateExec {
     }
 
     /// Dry run the instantiation before tx submission. Returns the gas required estimate.
-    async fn pre_submit_dry_run_gas_estimate(
+    pub async fn pre_submit_dry_run_gas_estimate(
         &self,
         print_to_terminal: bool,
     ) -> Result<Weight> {
