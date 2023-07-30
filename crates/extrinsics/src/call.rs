@@ -203,7 +203,8 @@ impl CallCommand {
         self.output_json
     }
 
-    pub fn run(&self) -> Result<(), ErrorVariant> {
+    /// Helper method for preprocessing contract artifacts.
+    pub fn preprocess(&self) -> Result<(ContractMessageTranscoder, Vec<u8>, PairSigner)> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let transcoder = artifacts.contract_transcoder()?;
 
@@ -212,6 +213,12 @@ impl CallCommand {
 
         let signer = super::pair_signer(self.extrinsic_opts.signer()?);
 
+        Ok((transcoder, call_data, signer))
+    }
+
+    pub fn run(&self) -> Result<(), ErrorVariant> {
+        let (transcoder, _, _) = self.preprocess()?;
+
         Runtime::new()?
             .block_on(async {
                 let url = self.extrinsic_opts.url_to_string();
@@ -219,7 +226,7 @@ impl CallCommand {
 
                 if !self.extrinsic_opts.execute {
                     let result = self
-                        .call_dry_run(call_data.clone(), &client, &signer)
+                        .call_dry_run(&client)
                         .await?;
                     match result.result {
                         Ok(ref ret_val) => {
@@ -268,7 +275,7 @@ impl CallCommand {
                     }
                 } else {
                     let gas_limit = self
-                        .pre_submit_dry_run_gas_estimate(&client, &call_data, &signer, true)
+                        .pre_submit_dry_run_gas_estimate(&client,true)
                         .await?;
 
                     if !self.extrinsic_opts.skip_confirm {
@@ -283,7 +290,7 @@ impl CallCommand {
                         })?;
                     }
                     let token_metadata = TokenMetadata::query(&client).await?;
-                    let display_events = self.call(&client, call_data, &signer, &transcoder, gas_limit, &token_metadata).await?;
+                    let display_events = self.call(&client, gas_limit).await?;
                     let output = if self.output_json {
                         display_events.to_json()?
                     } else {
@@ -298,10 +305,9 @@ impl CallCommand {
 
     pub async fn call_dry_run(
         &self,
-        input_data: Vec<u8>,
         client: &Client,
-        signer: &PairSigner,
     ) -> Result<ContractExecResult<Balance, ()>> {
+        let (_, input_data, signer) = self.preprocess()?;
         let url = self.extrinsic_opts.url_to_string();
         let token_metadata = TokenMetadata::query(client).await?;
         let storage_deposit_limit = self
@@ -324,26 +330,24 @@ impl CallCommand {
     pub async fn call(
         &self,
         client: &Client,
-        data: Vec<u8>,
-        signer: &PairSigner,
-        transcoder: &ContractMessageTranscoder,
         gas_limit: Weight,
-        token_metadata: &TokenMetadata,
     ) -> Result<DisplayEvents, ErrorVariant> {
+        let (transcoder, data, signer) = self.preprocess()?;
         tracing::debug!("calling contract {:?}", self.contract);
+        let token_metadata = TokenMetadata::query(client).await?;
 
         let call = api::tx().contracts().call(
             self.contract.clone().into(),
-            self.value.denominate_balance(token_metadata)?,
+            self.value.denominate_balance(&token_metadata)?,
             gas_limit.into(),
-            self.extrinsic_opts.storage_deposit_limit(token_metadata)?,
+            self.extrinsic_opts.storage_deposit_limit(&token_metadata)?,
             data,
         );
 
-        let result = submit_extrinsic(client, &call, signer).await?;
+        let result = submit_extrinsic(client, &call, &signer).await?;
 
         let display_events =
-            DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
+            DisplayEvents::from_events(&result, Some(&transcoder), &client.metadata())?;
 
         Ok(display_events)
     }
@@ -352,8 +356,6 @@ impl CallCommand {
     async fn pre_submit_dry_run_gas_estimate(
         &self,
         client: &Client,
-        data: &[u8],
-        signer: &PairSigner,
         print_to_terminal: bool,
     ) -> Result<Weight> {
         if self.extrinsic_opts.skip_dry_run {
@@ -369,7 +371,7 @@ impl CallCommand {
         if !self.output_json && print_to_terminal {
             super::print_dry_running_status(&self.message);
         }
-        let call_result = self.call_dry_run(data.to_vec(), client, signer).await?;
+        let call_result = self.call_dry_run(client).await?;
         match call_result.result {
             Ok(_) => {
                 if !self.output_json && print_to_terminal {

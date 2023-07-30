@@ -25,7 +25,6 @@ use super::{
     state,
     submit_extrinsic,
     Client,
-    CodeHash,
     ContractMessageTranscoder,
     DefaultConfig,
     ErrorVariant,
@@ -119,7 +118,10 @@ impl RemoveCommand {
         self.output_json
     }
 
-    pub fn run(&self) -> Result<(), ErrorVariant> {
+    /// Helper method for preprocessing contract artifacts.
+    pub fn preprocess(
+        &self,
+    ) -> Result<(ContractMessageTranscoder, PairSigner, [u8; 32])> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let transcoder = artifacts.contract_transcoder()?;
         let signer = super::pair_signer(self.extrinsic_opts.signer()?);
@@ -127,33 +129,26 @@ impl RemoveCommand {
         let artifacts_path = artifacts.artifact_path().to_path_buf();
 
         let final_code_hash = match (self.code_hash.as_ref(), artifacts.code.as_ref()) {
-            (Some(code_h), _) => {
-                Ok(code_h.0)
-            }
-            (None, Some(_)) => {
-                artifacts.code_hash()
-            }
-            (None, None) => {
-                Err(anyhow::anyhow!(
-                    "No code_hash was provided or contract code was not found from artifact \
-                     file {}. Please provide a code hash with --code-hash argument or specify the \
-                     path for artifacts files with --manifest-path",
-                    artifacts_path.display()
-                ))
-            }
+            (Some(code_h), _) => Ok(code_h.0),
+            (None, Some(_)) => artifacts.code_hash(),
+            (None, None) => Err(anyhow::anyhow!(
+                "No code_hash was provided or contract code was not found from artifact \
+                file {}. Please provide a code hash with --code-hash argument or specify the \
+                path for artifacts files with --manifest-path",
+                artifacts_path.display()
+            )),
         }?;
+
+        Ok((transcoder, signer, final_code_hash))
+    }
+
+    pub fn run(&self) -> Result<(), ErrorVariant> {
+        let (_, _, final_code_hash) = self.preprocess()?;
 
         Runtime::new()?.block_on(async {
             let url = self.extrinsic_opts.url_to_string();
             let client = OnlineClient::from_url(url.clone()).await?;
-            let remove_result = self
-                .remove_code(
-                    &client,
-                    sp_core::H256(final_code_hash),
-                    &signer,
-                    &transcoder,
-                )
-                .await?;
+            let remove_result = self.remove_code(&client).await?;
             let display_events = remove_result.display_events;
             let output = if self.output_json {
                 display_events.to_json()?
@@ -186,17 +181,16 @@ impl RemoveCommand {
     pub async fn remove_code(
         &self,
         client: &Client,
-        code_hash: CodeHash,
-        signer: &PairSigner,
-        transcoder: &ContractMessageTranscoder,
     ) -> Result<RemoveResult, ErrorVariant> {
+        let (transcoder, signer, final_code_hash) = self.preprocess()?;
+        let code_hash = sp_core::H256(final_code_hash);
         let call = api::tx()
             .contracts()
             .remove_code(sp_core::H256(code_hash.0));
 
-        let result = submit_extrinsic(client, &call, signer).await?;
+        let result = submit_extrinsic(client, &call, &signer).await?;
         let display_events =
-            DisplayEvents::from_events(&result, Some(transcoder), &client.metadata())?;
+            DisplayEvents::from_events(&result, Some(&transcoder), &client.metadata())?;
 
         let code_removed = result.find_first::<CodeRemoved>()?;
         Ok(RemoveResult {

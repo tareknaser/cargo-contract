@@ -113,7 +113,8 @@ impl UploadCommand {
         self.output_json
     }
 
-    pub fn run(&self) -> Result<(), ErrorVariant> {
+    /// Helper method for preprocessing contract artifacts.
+    pub fn preprocess(&self) -> Result<(WasmCode, PairSigner)> {
         let artifacts = self.extrinsic_opts.contract_artifacts()?;
         let signer = super::pair_signer(self.extrinsic_opts.signer()?);
 
@@ -124,6 +125,12 @@ impl UploadCommand {
                 artifacts_path.display()
             )
         })?;
+
+        Ok((code, signer))
+    }
+
+    pub fn run(&self) -> Result<(), ErrorVariant> {
+        let (code, _) = self.preprocess()?;
         let code_hash = code.code_hash();
 
         Runtime::new()?
@@ -132,7 +139,7 @@ impl UploadCommand {
                 let client = OnlineClient::from_url(url.clone()).await?;
 
                 if !self.extrinsic_opts.execute {
-                    match self.upload_code_rpc(code, &client, &signer).await? {
+                    match self.upload_code_rpc(&client).await? {
                         Ok(result) => {
                             let upload_result = UploadDryRunResult {
                                 result: String::from("Success!"),
@@ -157,7 +164,7 @@ impl UploadCommand {
                         }
                     }
                 } else {
-                    let upload_result = self.upload_code(&client, code, &signer).await?;
+                    let upload_result = self.upload_code(&client).await?;
                     let display_events = upload_result.display_events;
                     let output = if self.output_json {
                         display_events.to_json()?
@@ -189,12 +196,11 @@ impl UploadCommand {
         })
     }
 
-    pub async fn upload_code_rpc(
+    async fn upload_code_rpc(
         &self,
-        code: WasmCode,
         client: &Client,
-        signer: &PairSigner,
     ) -> Result<CodeUploadResult<CodeHash, Balance>> {
+        let (code, signer) = self.preprocess()?;
         let url = self.extrinsic_opts.url_to_string();
         let token_metadata = TokenMetadata::query(client).await?;
         let storage_deposit_limit = self
@@ -215,9 +221,8 @@ impl UploadCommand {
     pub async fn upload_code(
         &self,
         client: &Client,
-        code: WasmCode,
-        signer: &PairSigner,
     ) -> Result<UploadResult, ErrorVariant> {
+        let (code, signer) = self.preprocess()?;
         let token_metadata = TokenMetadata::query(client).await?;
         let storage_deposit_limit =
             self.extrinsic_opts.storage_deposit_limit(&token_metadata)?;
@@ -227,7 +232,7 @@ impl UploadCommand {
             Determinism::Enforced,
         );
 
-        let result = submit_extrinsic(client, &call, signer).await?;
+        let result = submit_extrinsic(client, &call, &signer).await?;
         let display_events =
             DisplayEvents::from_events(&result, None, &client.metadata())?;
 
