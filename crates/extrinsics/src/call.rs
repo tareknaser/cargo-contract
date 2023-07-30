@@ -16,10 +16,7 @@
 
 use super::{
     display_contract_exec_result,
-    display_contract_exec_result_debug,
-    display_dry_run_result_warning,
     events::DisplayEvents,
-    prompt_confirm_tx,
     runtime_api::api,
     state,
     state_call,
@@ -42,7 +39,6 @@ use super::{
 
 use anyhow::{
     anyhow,
-    Context,
     Result,
 };
 use contract_build::name_value_println;
@@ -51,7 +47,6 @@ use contract_transcode::Value;
 use pallet_contracts_primitives::ContractExecResult;
 use scale::Encode;
 use sp_weights::Weight;
-use tokio::runtime::Runtime;
 
 use core::marker::PhantomData;
 use std::fmt::Debug;
@@ -231,104 +226,21 @@ impl CallCommand {
             signer,
         })
     }
-
-    pub fn run(&self) -> Result<(), ErrorVariant> {
-        Runtime::new()?
-            .block_on(async {
-                let call_exec = self.preprocess().await?;
-                if !call_exec.opts.execute {
-                    let result = call_exec
-                        .call_dry_run()
-                        .await?;
-                    match result.result {
-                        Ok(ref ret_val) => {
-                            let value = call_exec.transcoder
-                                .decode_message_return(
-                                    &call_exec.message,
-                                    &mut &ret_val.data[..],
-                                )
-                                .context(format!(
-                                    "Failed to decode return value {:?}",
-                                    &ret_val
-                                ))?;
-                            let dry_run_result = CallDryRunResult {
-                                reverted: ret_val.did_revert(),
-                                data: value,
-                                gas_consumed: result.gas_consumed,
-                                gas_required: result.gas_required,
-                                storage_deposit: StorageDeposit::from(
-                                    &result.storage_deposit,
-                                ),
-                            };
-                            if call_exec.output_json {
-                                println!("{}", dry_run_result.to_json()?);
-                            } else {
-                                dry_run_result.print();
-                                display_contract_exec_result_debug::<
-                                    _,
-                                    DEFAULT_KEY_COL_WIDTH,
-                                >(&result)?;
-                                display_dry_run_result_warning("message");
-                            };
-                        }
-                        Err(ref err) => {
-                            let metadata = call_exec.client.metadata();
-                            let object =
-                                ErrorVariant::from_dispatch_error(err, &metadata)?;
-                            if call_exec.output_json {
-                                return Err(object)
-                            } else {
-                                name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
-                                display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
-                                    &result,
-                                )?;
-                            }
-                        }
-                    }
-                } else {
-                    let gas_limit = call_exec
-                        .pre_submit_dry_run_gas_estimate(true)
-                        .await?;
-
-                    if !call_exec.opts.skip_confirm {
-                        prompt_confirm_tx(|| {
-                            name_value_println!("Message", call_exec.message, DEFAULT_KEY_COL_WIDTH);
-                            name_value_println!("Args", call_exec.args.join(" "), DEFAULT_KEY_COL_WIDTH);
-                            name_value_println!(
-                                "Gas limit",
-                                gas_limit.to_string(),
-                                DEFAULT_KEY_COL_WIDTH
-                            );
-                        })?;
-                    }
-                    let token_metadata = TokenMetadata::query(&call_exec.client).await?;
-                    let display_events = call_exec.call(gas_limit).await?;
-                    let output = if call_exec.output_json {
-                        display_events.to_json()?
-                    } else {
-                        display_events
-                            .display_events(call_exec.opts.verbosity()?, &token_metadata)?
-                    };
-                    println!("{output}");
-                }
-                Ok(())
-            })
-    }
 }
 
 pub struct CallExec {
-    contract: <DefaultConfig as Config>::AccountId,
-    message: String,
-    args: Vec<String>,
-    opts: ExtrinsicOpts,
-    gas_limit: Option<u64>,
-    proof_size: Option<u64>,
-    value: BalanceVariant,
-    output_json: bool,
-    client: Client,
-    transcoder: ContractMessageTranscoder,
-    call_data: Vec<u8>,
-    signer: PairSigner,
+    pub contract: <DefaultConfig as Config>::AccountId,
+    pub message: String,
+    pub args: Vec<String>,
+    pub opts: ExtrinsicOpts,
+    pub gas_limit: Option<u64>,
+    pub proof_size: Option<u64>,
+    pub value: BalanceVariant,
+    pub output_json: bool,
+    pub client: Client,
+    pub transcoder: ContractMessageTranscoder,
+    pub call_data: Vec<u8>,
+    pub signer: PairSigner,
 }
 
 impl CallExec {
@@ -376,7 +288,7 @@ impl CallExec {
     }
 
     /// Dry run the call before tx submission. Returns the gas required estimate.
-    async fn pre_submit_dry_run_gas_estimate(
+    pub async fn pre_submit_dry_run_gas_estimate(
         &self,
         print_to_terminal: bool,
     ) -> Result<Weight> {

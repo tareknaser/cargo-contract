@@ -109,6 +109,7 @@ pub use instantiate::{
 pub use remove::RemoveCommand;
 pub use subxt::PolkadotConfig as DefaultConfig;
 pub use upload::{
+    CodeHashResult,
     CodeUploadRequest,
     UploadCommand,
     UploadDryRunResult,
@@ -329,6 +330,14 @@ impl ExtrinsicOpts {
             .map(|bv| bv.denominate_balance(token_metadata))
             .transpose()?
             .map(Into::into))
+    }
+
+    pub fn execute(&self) -> bool {
+        self.execute
+    }
+
+    pub fn skip_confirm(&self) -> bool {
+        self.skip_confirm
     }
 }
 
@@ -569,7 +578,7 @@ async fn state_call<A: Encode, R: Decode>(url: &str, func: &str, args: A) -> Res
 }
 
 /// Prompt the user to confirm transaction submission.
-fn prompt_confirm_tx<F: FnOnce()>(show_details: F) -> Result<()> {
+pub fn prompt_confirm_tx<F: FnOnce()>(show_details: F) -> Result<()> {
     println!(
         "{} (skip with --skip-confirm or -y)",
         "Confirm transaction details:".bright_white().bold()

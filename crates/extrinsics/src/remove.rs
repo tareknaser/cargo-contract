@@ -16,7 +16,6 @@
 
 use super::{
     events::DisplayEvents,
-    name_value_println,
     parse_code_hash,
     runtime_api::api::{
         self,
@@ -31,7 +30,6 @@ use super::{
     ExtrinsicOpts,
     Missing,
     PairSigner,
-    TokenMetadata,
 };
 use anyhow::Result;
 use core::marker::PhantomData;
@@ -40,7 +38,6 @@ use subxt::{
     Config,
     OnlineClient,
 };
-use tokio::runtime::Runtime;
 
 #[derive(Debug, clap::Args)]
 #[clap(name = "remove", about = "Remove a contract's code")]
@@ -149,48 +146,15 @@ impl RemoveCommand {
             signer,
         })
     }
-
-    pub fn run(&self) -> Result<(), ErrorVariant> {
-        Runtime::new()?.block_on(async {
-            let remove_exec = self.preprocess().await?;
-            let remove_result = remove_exec.remove_code().await?;
-            let display_events = remove_result.display_events;
-            let output = if remove_exec.output_json {
-                display_events.to_json()?
-            } else {
-                let token_metadata = TokenMetadata::query(&remove_exec.client).await?;
-                display_events
-                    .display_events(remove_exec.opts.verbosity()?, &token_metadata)?
-            };
-            println!("{output}");
-            if let Some(code_removed) = remove_result.code_removed {
-                let remove_result = code_removed.code_hash;
-
-                if remove_exec.output_json {
-                    println!("{}", &remove_result);
-                } else {
-                    name_value_println!("Code hash", format!("{remove_result:?}"));
-                }
-                Result::<(), ErrorVariant>::Ok(())
-            } else {
-                let error_code_hash = hex::encode(remove_exec.final_code_hash);
-                Err(anyhow::anyhow!(
-                    "Error removing the code for the supplied code hash: {}",
-                    error_code_hash
-                )
-                .into())
-            }
-        })
-    }
 }
 
 pub struct RemoveExec {
-    final_code_hash: [u8; 32],
-    opts: ExtrinsicOpts,
-    output_json: bool,
-    client: Client,
-    transcoder: ContractMessageTranscoder,
-    signer: PairSigner,
+    pub final_code_hash: [u8; 32],
+    pub opts: ExtrinsicOpts,
+    pub output_json: bool,
+    pub client: Client,
+    pub transcoder: ContractMessageTranscoder,
+    pub signer: PairSigner,
 }
 
 impl RemoveExec {
@@ -216,6 +180,6 @@ impl RemoveExec {
 }
 
 pub struct RemoveResult {
-    code_removed: Option<CodeRemoved>,
-    display_events: DisplayEvents,
+    pub code_removed: Option<CodeRemoved>,
+    pub display_events: DisplayEvents,
 }

@@ -16,10 +16,7 @@
 
 use super::{
     display_contract_exec_result,
-    display_contract_exec_result_debug,
-    display_dry_run_result_warning,
     events::DisplayEvents,
-    prompt_confirm_tx,
     runtime_api::api,
     state,
     state_call,
@@ -62,7 +59,6 @@ use subxt::{
     Config,
     OnlineClient,
 };
-use tokio::runtime::Runtime;
 
 #[derive(Debug, clap::Args)]
 pub struct InstantiateCommand {
@@ -253,83 +249,18 @@ impl InstantiateCommand {
             output_json: self.output_json,
         })
     }
-
-    /// Instantiate a contract stored at the supplied code hash.
-    /// Returns the account id of the instantiated contract if successful.
-    ///
-    /// Creates an extrinsic with the `Contracts::instantiate` Call, submits via RPC, then
-    /// waits for the `ContractsEvent::Instantiated` event.
-    pub fn run(&self) -> Result<(), ErrorVariant> {
-        Runtime::new()?.block_on(async {
-            let instantiate_exec = self.preprocess().await?;
-
-            if !self.extrinsic_opts.execute {
-                let result = instantiate_exec.instantiate_dry_run().await?;
-                match instantiate_exec.do_not_execute().await {
-                    Ok(dry_run_result) => {
-                        if self.output_json {
-                            println!("{}", dry_run_result.to_json()?);
-                        } else {
-                            dry_run_result.print();
-                            display_contract_exec_result_debug::<
-                                _,
-                                DEFAULT_KEY_COL_WIDTH,
-                            >(&result)?;
-                            display_dry_run_result_warning("instantiate");
-                        }
-                        Ok(())
-                    }
-                    Err(object) => {
-                        if self.output_json {
-                            return Err(object)
-                        } else {
-                            name_value_println!("Result", object, MAX_KEY_COL_WIDTH);
-                            display_contract_exec_result::<_, MAX_KEY_COL_WIDTH>(
-                                &result,
-                            )?;
-                        }
-                        Err(object)
-                    }
-                }
-            }
-            else {
-                tracing::debug!("instantiate data {:?}", instantiate_exec.args.data);
-                let gas_limit = instantiate_exec
-                    .pre_submit_dry_run_gas_estimate(true)
-                    .await?;
-                if !instantiate_exec.opts.skip_confirm {
-                    prompt_confirm_tx(|| {
-                        instantiate_exec
-                            .print_default_instantiate_preview(gas_limit);
-                        if let Code::Existing(code_hash) = instantiate_exec.args.code.clone() {
-                            name_value_println!(
-                                "Code hash",
-                                format!("{code_hash:?}"),
-                                DEFAULT_KEY_COL_WIDTH
-                            );
-                        }
-                    })?;
-                }
-                let instantiate_result = instantiate_exec
-                    .instantiate(gas_limit)
-                    .await?;
-                instantiate_exec.display_result(instantiate_result).await?;
-                Ok(())
-            }
-        })
-    }
 }
 
 pub struct InstantiateArgs {
-    constructor: String,
-    raw_args: Vec<String>,
-    value: Balance,
-    gas_limit: Option<u64>,
-    proof_size: Option<u64>,
-    storage_deposit_limit: Option<Balance>,
-    code: Code,
-    data: Vec<u8>,
-    salt: Vec<u8>,
+    pub constructor: String,
+    pub raw_args: Vec<String>,
+    pub value: Balance,
+    pub gas_limit: Option<u64>,
+    pub proof_size: Option<u64>,
+    pub storage_deposit_limit: Option<Balance>,
+    pub code: Code,
+    pub data: Vec<u8>,
+    pub salt: Vec<u8>,
 }
 
 impl InstantiateArgs {
@@ -339,14 +270,14 @@ impl InstantiateArgs {
 }
 
 pub struct InstantiateExec {
-    opts: ExtrinsicOpts,
-    args: InstantiateArgs,
-    verbosity: Verbosity,
-    url: String,
-    client: Client,
-    signer: PairSigner,
-    transcoder: ContractMessageTranscoder,
-    output_json: bool,
+    pub opts: ExtrinsicOpts,
+    pub args: InstantiateArgs,
+    pub verbosity: Verbosity,
+    pub url: String,
+    pub client: Client,
+    pub signer: PairSigner,
+    pub transcoder: ContractMessageTranscoder,
+    pub output_json: bool,
 }
 
 impl InstantiateExec {
