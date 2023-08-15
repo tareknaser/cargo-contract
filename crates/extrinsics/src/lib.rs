@@ -24,7 +24,7 @@ mod runtime_api;
 mod upload;
 
 #[cfg(test)]
-#[cfg(feature = "integration-tests")]
+// #[cfg(feature = "integration-tests")]
 mod integration_tests;
 
 use subxt::utils::AccountId32;
